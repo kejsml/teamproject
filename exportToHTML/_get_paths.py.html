@@ -1,0 +1,173 @@
+<html>
+<head>
+<title>_get_paths.py</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #cc7832;}
+.s1 { color: #a9b7c6;}
+.s2 { color: #6a8759;}
+.s3 { color: #808080;}
+.s4 { color: #629755; font-style: italic;}
+.s5 { color: #6897bb;}
+</style>
+</head>
+<body bgcolor="#1e1f22">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+_get_paths.py</font>
+</center></td></tr></table>
+<pre><span class="s0">from </span><span class="s1">._utils </span><span class="s0">import </span><span class="s1">AttributeDict</span>
+<span class="s0">from </span><span class="s1">. </span><span class="s0">import </span><span class="s1">exceptions</span>
+
+<span class="s1">CONFIG = AttributeDict()</span>
+
+
+<span class="s0">def </span><span class="s1">get_asset_url(path):</span>
+    <span class="s0">return </span><span class="s1">app_get_asset_url(CONFIG</span><span class="s0">, </span><span class="s1">path)</span>
+
+
+<span class="s0">def </span><span class="s1">app_get_asset_url(config</span><span class="s0">, </span><span class="s1">path):</span>
+    <span class="s0">if </span><span class="s1">config.assets_external_path:</span>
+        <span class="s1">prefix = config.assets_external_path</span>
+    <span class="s0">else</span><span class="s1">:</span>
+        <span class="s1">prefix = config.requests_pathname_prefix</span>
+    <span class="s0">return </span><span class="s2">&quot;/&quot;</span><span class="s1">.join(</span>
+        <span class="s1">[</span>
+            <span class="s3"># Only take the first part of the pathname</span>
+            <span class="s1">prefix.rstrip(</span><span class="s2">&quot;/&quot;</span><span class="s1">)</span><span class="s0">,</span>
+            <span class="s1">config.assets_url_path.lstrip(</span><span class="s2">&quot;/&quot;</span><span class="s1">)</span><span class="s0">,</span>
+            <span class="s1">path</span><span class="s0">,</span>
+        <span class="s1">]</span>
+    <span class="s1">)</span>
+
+
+<span class="s0">def </span><span class="s1">get_relative_path(path):</span>
+    <span class="s4">&quot;&quot;&quot; 
+    Return a path with `requests_pathname_prefix` prefixed before it. 
+    Use this function when specifying local URL paths that will work 
+    in environments regardless of what `requests_pathname_prefix` is. 
+    In some deployment environments, like Dash Enterprise, 
+    `requests_pathname_prefix` is set to the application name, 
+    e.g. `my-dash-app`. 
+    When working locally, `requests_pathname_prefix` might be unset and 
+    so a relative URL like `/page-2` can just be `/page-2`. 
+    However, when the app is deployed to a URL like `/my-dash-app`, then 
+    `dash.get_relative_path('/page-2')` will return `/my-dash-app/page-2`. 
+    This can be used as an alternative to `get_asset_url` as well with 
+    `dash.get_relative_path('/assets/logo.png')` 
+ 
+    Use this function with `dash.strip_relative_path` in callbacks that 
+    deal with `dcc.Location` `pathname` routing. 
+    That is, your usage may look like: 
+    ``` 
+    app.layout = html.Div([ 
+        dcc.Location(id='url'), 
+        html.Div(id='content') 
+    ]) 
+    @dash.callback(Output('content', 'children'), [Input('url', 'pathname')]) 
+    def display_content(path): 
+        page_name = dash.strip_relative_path(path) 
+        if not page_name:  # None or '' 
+            return html.Div([ 
+                dcc.Link(href=dash.get_relative_path('/page-1')), 
+                dcc.Link(href=dash.get_relative_path('/page-2')), 
+            ]) 
+        elif page_name == 'page-1': 
+            return chapters.page_1 
+        if page_name == &quot;page-2&quot;: 
+            return chapters.page_2 
+    ``` 
+    &quot;&quot;&quot;</span>
+    <span class="s0">return </span><span class="s1">app_get_relative_path(CONFIG.requests_pathname_prefix</span><span class="s0">, </span><span class="s1">path)</span>
+
+
+<span class="s0">def </span><span class="s1">app_get_relative_path(requests_pathname</span><span class="s0">, </span><span class="s1">path):</span>
+    <span class="s0">if </span><span class="s1">requests_pathname == </span><span class="s2">&quot;/&quot; </span><span class="s0">and </span><span class="s1">path == </span><span class="s2">&quot;&quot;</span><span class="s1">:</span>
+        <span class="s0">return </span><span class="s2">&quot;/&quot;</span>
+    <span class="s0">if </span><span class="s1">requests_pathname != </span><span class="s2">&quot;/&quot; </span><span class="s0">and </span><span class="s1">path == </span><span class="s2">&quot;&quot;</span><span class="s1">:</span>
+        <span class="s0">return </span><span class="s1">requests_pathname</span>
+    <span class="s0">if not </span><span class="s1">path.startswith(</span><span class="s2">&quot;/&quot;</span><span class="s1">):</span>
+        <span class="s0">raise </span><span class="s1">exceptions.UnsupportedRelativePath(</span>
+            <span class="s2">f&quot;&quot;&quot;</span>
+            <span class="s2">Paths that aren't prefixed with a leading / are not supported.</span>
+            <span class="s2">You supplied: </span><span class="s0">{</span><span class="s1">path</span><span class="s0">}</span>
+            <span class="s2">&quot;&quot;&quot;</span>
+        <span class="s1">)</span>
+    <span class="s0">return </span><span class="s2">&quot;/&quot;</span><span class="s1">.join([requests_pathname.rstrip(</span><span class="s2">&quot;/&quot;</span><span class="s1">)</span><span class="s0">, </span><span class="s1">path.lstrip(</span><span class="s2">&quot;/&quot;</span><span class="s1">)])</span>
+
+
+<span class="s0">def </span><span class="s1">strip_relative_path(path):</span>
+    <span class="s4">&quot;&quot;&quot; 
+    Return a path with `requests_pathname_prefix` and leading and trailing 
+    slashes stripped from it. Also, if None is passed in, None is returned. 
+    Use this function with `get_relative_path` in callbacks that deal 
+    with `dcc.Location` `pathname` routing. 
+    That is, your usage may look like: 
+    ``` 
+    app.layout = html.Div([ 
+        dcc.Location(id='url'), 
+        html.Div(id='content') 
+    ]) 
+    @dash.callback(Output('content', 'children'), [Input('url', 'pathname')]) 
+    def display_content(path): 
+        page_name = dash.strip_relative_path(path) 
+        if not page_name:  # None or '' 
+            return html.Div([ 
+                dcc.Link(href=dash.get_relative_path('/page-1')), 
+                dcc.Link(href=dash.get_relative_path('/page-2')), 
+            ]) 
+        elif page_name == 'page-1': 
+            return chapters.page_1 
+        if page_name == &quot;page-2&quot;: 
+            return chapters.page_2 
+    ``` 
+    Note that `chapters.page_1` will be served if the user visits `/page-1` 
+    _or_ `/page-1/` since `strip_relative_path` removes the trailing slash. 
+ 
+    Also note that `strip_relative_path` is compatible with 
+    `get_relative_path` in environments where `requests_pathname_prefix` set. 
+    In some deployment environments, like Dash Enterprise, 
+    `requests_pathname_prefix` is set to the application name, e.g. `my-dash-app`. 
+    When working locally, `requests_pathname_prefix` might be unset and 
+    so a relative URL like `/page-2` can just be `/page-2`. 
+    However, when the app is deployed to a URL like `/my-dash-app`, then 
+    `dash.get_relative_path('/page-2')` will return `/my-dash-app/page-2` 
+ 
+    The `pathname` property of `dcc.Location` will return '`/my-dash-app/page-2`' 
+    to the callback. 
+    In this case, `dash.strip_relative_path('/my-dash-app/page-2')` 
+    will return `'page-2'` 
+ 
+    For nested URLs, slashes are still included: 
+    `dash.strip_relative_path('/page-1/sub-page-1/')` will return 
+    `page-1/sub-page-1` 
+    ``` 
+    &quot;&quot;&quot;</span>
+    <span class="s0">return </span><span class="s1">app_strip_relative_path(CONFIG.requests_pathname_prefix</span><span class="s0">, </span><span class="s1">path)</span>
+
+
+<span class="s0">def </span><span class="s1">app_strip_relative_path(requests_pathname</span><span class="s0">, </span><span class="s1">path):</span>
+    <span class="s0">if </span><span class="s1">path </span><span class="s0">is None</span><span class="s1">:</span>
+        <span class="s0">return None</span>
+    <span class="s0">if </span><span class="s1">(</span>
+        <span class="s1">requests_pathname != </span><span class="s2">&quot;/&quot; </span><span class="s0">and not </span><span class="s1">path.startswith(requests_pathname.rstrip(</span><span class="s2">&quot;/&quot;</span><span class="s1">))</span>
+    <span class="s1">) </span><span class="s0">or </span><span class="s1">(requests_pathname == </span><span class="s2">&quot;/&quot; </span><span class="s0">and not </span><span class="s1">path.startswith(</span><span class="s2">&quot;/&quot;</span><span class="s1">)):</span>
+        <span class="s0">raise </span><span class="s1">exceptions.UnsupportedRelativePath(</span>
+            <span class="s2">f&quot;&quot;&quot;</span>
+            <span class="s2">Paths that aren't prefixed with requests_pathname_prefix are not supported.</span>
+            <span class="s2">You supplied: </span><span class="s0">{</span><span class="s1">path</span><span class="s0">} </span><span class="s2">and requests_pathname_prefix was </span><span class="s0">{</span><span class="s1">requests_pathname</span><span class="s0">}</span>
+            <span class="s2">&quot;&quot;&quot;</span>
+        <span class="s1">)</span>
+    <span class="s0">if </span><span class="s1">requests_pathname != </span><span class="s2">&quot;/&quot; </span><span class="s0">and </span><span class="s1">path.startswith(requests_pathname.rstrip(</span><span class="s2">&quot;/&quot;</span><span class="s1">)):</span>
+        <span class="s1">path = path.replace(</span>
+            <span class="s3"># handle the case where the path might be `/my-dash-app`</span>
+            <span class="s3"># but the requests_pathname_prefix is `/my-dash-app/`</span>
+            <span class="s1">requests_pathname.rstrip(</span><span class="s2">&quot;/&quot;</span><span class="s1">)</span><span class="s0">,</span>
+            <span class="s2">&quot;&quot;</span><span class="s0">,</span>
+            <span class="s5">1</span><span class="s0">,</span>
+        <span class="s1">)</span>
+    <span class="s0">return </span><span class="s1">path.strip(</span><span class="s2">&quot;/&quot;</span><span class="s1">)</span>
+</pre>
+</body>
+</html>

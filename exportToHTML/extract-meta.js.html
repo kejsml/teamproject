@@ -1,0 +1,800 @@
+<html>
+<head>
+<title>extract-meta.js</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #a9b7c6;}
+.s1 { color: #cc7832;}
+.s2 { color: #6a8759;}
+.s3 { color: #6897bb;}
+.s4 { color: #808080;}
+.s5 { color: #4646f1;}
+</style>
+</head>
+<body bgcolor="#1e1f22">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+extract-meta.js</font>
+</center></td></tr></table>
+<pre><span class="s0">#!/usr/bin/env node</span>
+<span class="s1">if </span><span class="s0">(process.env.MODULES_PATH) {</span>
+    <span class="s0">module.paths.push(process.env.MODULES_PATH);</span>
+<span class="s0">}</span>
+<span class="s0">let ts,</span>
+    <span class="s0">tsEnabled = </span><span class="s1">true</span><span class="s0">;</span>
+<span class="s1">try </span><span class="s0">{</span>
+    <span class="s0">ts = require(</span><span class="s2">'typescript'</span><span class="s0">);</span>
+<span class="s0">} </span><span class="s1">catch </span><span class="s0">(e) {</span>
+    <span class="s0">ts = {};</span>
+    <span class="s0">tsEnabled = </span><span class="s1">false</span><span class="s0">;</span>
+<span class="s0">}</span>
+<span class="s0">const fs = require(</span><span class="s2">'fs'</span><span class="s0">);</span>
+<span class="s0">const path = require(</span><span class="s2">'path'</span><span class="s0">);</span>
+<span class="s0">const reactDocs = require(</span><span class="s2">'react-docgen'</span><span class="s0">);</span>
+
+<span class="s0">const args = process.argv.slice(</span><span class="s3">2</span><span class="s0">);</span>
+<span class="s0">const src = args.slice(</span><span class="s3">2</span><span class="s0">);</span>
+<span class="s0">const ignorePattern = args[</span><span class="s3">0</span><span class="s0">] ? </span><span class="s1">new </span><span class="s0">RegExp(args[</span><span class="s3">0</span><span class="s0">]) : </span><span class="s1">null</span><span class="s0">;</span>
+<span class="s0">const reservedPatterns = args[</span><span class="s3">1</span><span class="s0">]</span>
+    <span class="s0">? args[</span><span class="s3">1</span><span class="s0">].split(</span><span class="s2">'|'</span><span class="s0">).map(part =&gt; </span><span class="s1">new </span><span class="s0">RegExp(part))</span>
+    <span class="s0">: [];</span>
+
+<span class="s0">let tsconfig = {};</span>
+
+<span class="s1">function </span><span class="s0">help() {</span>
+    <span class="s0">console.error(</span><span class="s2">'usage: '</span><span class="s0">);</span>
+    <span class="s0">console.error(</span>
+        <span class="s2">'extract-meta ^fileIgnorePattern ^forbidden$|^props$|^patterns$' </span><span class="s0">+</span>
+            <span class="s2">' path/to/component(s) [path/to/more/component(s) ...] &gt; metadata.json'</span>
+    <span class="s0">);</span>
+<span class="s0">}</span>
+
+<span class="s1">if </span><span class="s0">(!src.length) {</span>
+    <span class="s0">help();</span>
+    <span class="s0">process.exit(</span><span class="s3">1</span><span class="s0">);</span>
+<span class="s0">}</span>
+
+<span class="s1">if </span><span class="s0">(fs.existsSync(</span><span class="s2">'tsconfig.json'</span><span class="s0">)) {</span>
+    <span class="s0">tsconfig = JSON.parse(fs.readFileSync(</span><span class="s2">'tsconfig.json'</span><span class="s0">)).compilerOptions;</span>
+<span class="s0">}</span>
+
+<span class="s0">let failedBuild = </span><span class="s1">false</span><span class="s0">;</span>
+<span class="s0">const excludedDocProps = [</span><span class="s2">'setProps'</span><span class="s0">, </span><span class="s2">'id'</span><span class="s0">, </span><span class="s2">'className'</span><span class="s0">, </span><span class="s2">'style'</span><span class="s0">];</span>
+
+<span class="s0">const isOptional = prop =&gt; (prop.getFlags() &amp; ts.SymbolFlags.Optional) !== </span><span class="s3">0</span><span class="s0">;</span>
+
+<span class="s0">const PRIMITIVES = [</span>
+    <span class="s2">'string'</span><span class="s0">,</span>
+    <span class="s2">'number'</span><span class="s0">,</span>
+    <span class="s2">'bool'</span><span class="s0">,</span>
+    <span class="s2">'any'</span><span class="s0">,</span>
+    <span class="s2">'array'</span><span class="s0">,</span>
+    <span class="s2">'object'</span><span class="s0">,</span>
+    <span class="s2">'node'</span>
+<span class="s0">];</span>
+
+<span class="s4">// These types take too long to parse because of heavy nesting.</span>
+<span class="s0">const BANNED_TYPES = [</span>
+    <span class="s2">'Document'</span><span class="s0">,</span>
+    <span class="s2">'ShadowRoot'</span><span class="s0">,</span>
+    <span class="s2">'ChildNode'</span><span class="s0">,</span>
+    <span class="s2">'ParentNode'</span><span class="s0">,</span>
+<span class="s0">];</span>
+<span class="s0">const unionSupport = PRIMITIVES.concat(</span><span class="s2">'boolean'</span><span class="s0">, </span><span class="s2">'Element'</span><span class="s0">);</span>
+
+<span class="s0">const reArray = </span><span class="s1">new </span><span class="s0">RegExp(`(${unionSupport.join(</span><span class="s2">'|'</span><span class="s0">)})\\[\\]`);</span>
+
+<span class="s0">const isArray = rawType =&gt; reArray.test(rawType);</span>
+
+<span class="s0">const isUnionLiteral = typeObj =&gt;</span>
+    <span class="s0">typeObj.types.every(</span>
+        <span class="s0">t =&gt;</span>
+            <span class="s0">t.getFlags() &amp;</span>
+            <span class="s0">(ts.TypeFlags.StringLiteral |</span>
+                <span class="s0">ts.TypeFlags.NumberLiteral |</span>
+                <span class="s0">ts.TypeFlags.EnumLiteral |</span>
+                <span class="s0">ts.TypeFlags.Undefined)</span>
+    <span class="s0">);</span>
+
+<span class="s1">function </span><span class="s0">logError(error, filePath) {</span>
+    <span class="s1">if </span><span class="s0">(filePath) {</span>
+        <span class="s0">process.stderr.write(`Error </span><span class="s1">with </span><span class="s0">path ${filePath}`);</span>
+    <span class="s0">}</span>
+    <span class="s0">process.stderr.write(error + </span><span class="s2">'</span><span class="s5">\n</span><span class="s2">'</span><span class="s0">);</span>
+    <span class="s1">if </span><span class="s0">(error </span><span class="s1">instanceof </span><span class="s0">Error) {</span>
+        <span class="s0">process.stderr.write(error.stack + </span><span class="s2">'</span><span class="s5">\n</span><span class="s2">'</span><span class="s0">);</span>
+    <span class="s0">}</span>
+<span class="s0">}</span>
+
+<span class="s1">function </span><span class="s0">isReservedPropName(propName) {</span>
+    <span class="s0">reservedPatterns.forEach(reservedPattern =&gt; {</span>
+        <span class="s1">if </span><span class="s0">(reservedPattern.test(propName)) {</span>
+            <span class="s0">process.stderr.write(</span>
+                <span class="s0">`\nERROR: </span><span class="s2">&quot;${propName}&quot; </span><span class="s0">matches reserved word ` +</span>
+                    <span class="s0">`pattern: ${reservedPattern.toString()}\n`</span>
+            <span class="s0">);</span>
+            <span class="s0">failedBuild = </span><span class="s1">true</span><span class="s0">;</span>
+        <span class="s0">}</span>
+    <span class="s0">});</span>
+    <span class="s1">return </span><span class="s0">failedBuild;</span>
+<span class="s0">}</span>
+
+<span class="s1">function </span><span class="s0">checkDocstring(name, value) {</span>
+    <span class="s1">if </span><span class="s0">(</span>
+        <span class="s0">!value ||</span>
+        <span class="s0">(value.length &lt; </span><span class="s3">1 </span><span class="s0">&amp;&amp; !excludedDocProps.includes(name.split(</span><span class="s2">'.'</span><span class="s0">).pop()))</span>
+    <span class="s0">) {</span>
+        <span class="s0">logError(`\nDescription </span><span class="s1">for </span><span class="s0">${name} is missing!`);</span>
+    <span class="s0">}</span>
+<span class="s0">}</span>
+
+<span class="s1">function </span><span class="s0">docstringWarning(doc) {</span>
+    <span class="s0">checkDocstring(doc.displayName, doc.description);</span>
+
+    <span class="s0">Object.entries(doc.props || {}).forEach(([name, p]) =&gt;</span>
+        <span class="s0">checkDocstring(`${doc.displayName}.${name}`, p.description)</span>
+    <span class="s0">);</span>
+<span class="s0">}</span>
+
+<span class="s1">function </span><span class="s0">zipArrays(...arrays) {</span>
+    <span class="s0">const arr = [];</span>
+    <span class="s1">for </span><span class="s0">(let i = </span><span class="s3">0</span><span class="s0">; i &lt;= arrays[</span><span class="s3">0</span><span class="s0">].length - </span><span class="s3">1</span><span class="s0">; i++) {</span>
+        <span class="s0">arr.push(arrays.map(a =&gt; a[i]));</span>
+    <span class="s0">}</span>
+    <span class="s1">return </span><span class="s0">arr;</span>
+<span class="s0">}</span>
+
+<span class="s1">function </span><span class="s0">cleanPath(filepath) {</span>
+    <span class="s1">return </span><span class="s0">filepath.split(path.sep).join(</span><span class="s2">'/'</span><span class="s0">);</span>
+<span class="s0">}</span>
+
+<span class="s1">function </span><span class="s0">parseJSX(filepath) {</span>
+    <span class="s1">try </span><span class="s0">{</span>
+        <span class="s0">const src = fs.readFileSync(filepath);</span>
+        <span class="s0">const doc = reactDocs.parse(src);</span>
+        <span class="s0">Object.keys(doc.props).forEach(propName =&gt;</span>
+            <span class="s0">isReservedPropName(propName)</span>
+        <span class="s0">);</span>
+        <span class="s0">docstringWarning(doc);</span>
+        <span class="s1">return </span><span class="s0">doc;</span>
+    <span class="s0">} </span><span class="s1">catch </span><span class="s0">(error) {</span>
+        <span class="s0">logError(error);</span>
+    <span class="s0">}</span>
+<span class="s0">}</span>
+
+<span class="s1">function </span><span class="s0">gatherComponents(sources, components = {}) {</span>
+    <span class="s0">const names = [];</span>
+    <span class="s0">const filepaths = [];</span>
+
+    <span class="s0">const gather = filepath =&gt; {</span>
+        <span class="s1">if </span><span class="s0">(ignorePattern &amp;&amp; ignorePattern.test(filepath)) {</span>
+            <span class="s1">return</span><span class="s0">;</span>
+        <span class="s0">}</span>
+        <span class="s0">const extension = path.extname(filepath);</span>
+        <span class="s1">if </span><span class="s0">([</span><span class="s2">'.jsx'</span><span class="s0">, </span><span class="s2">'.js'</span><span class="s0">].includes(extension)) {</span>
+            <span class="s0">components[cleanPath(filepath)] = parseJSX(filepath);</span>
+        <span class="s0">} </span><span class="s1">else if </span><span class="s0">(filepath.endsWith(</span><span class="s2">'.tsx'</span><span class="s0">)) {</span>
+            <span class="s1">try </span><span class="s0">{</span>
+                <span class="s0">const name = /(.*)\.tsx/.exec(path.basename(filepath))[</span><span class="s3">1</span><span class="s0">];</span>
+                <span class="s0">filepaths.push(filepath);</span>
+                <span class="s0">names.push(name);</span>
+            <span class="s0">} </span><span class="s1">catch </span><span class="s0">(err) {</span>
+                <span class="s0">process.stderr.write(</span>
+                    <span class="s0">`ERROR: Invalid component file ${filepath}: ${err}`</span>
+                <span class="s0">);</span>
+            <span class="s0">}</span>
+        <span class="s0">}</span>
+    <span class="s0">};</span>
+
+    <span class="s0">sources.forEach(sourcePath =&gt; {</span>
+        <span class="s1">if </span><span class="s0">(fs.lstatSync(sourcePath).isDirectory()) {</span>
+            <span class="s0">fs.readdirSync(sourcePath).forEach(f =&gt; {</span>
+                <span class="s0">const filepath = path.join(sourcePath, f);</span>
+                <span class="s1">if </span><span class="s0">(fs.lstatSync(filepath).isDirectory()) {</span>
+                    <span class="s0">gatherComponents([filepath], components);</span>
+                <span class="s0">} </span><span class="s1">else </span><span class="s0">{</span>
+                    <span class="s0">gather(filepath);</span>
+                <span class="s0">}</span>
+            <span class="s0">});</span>
+        <span class="s0">} </span><span class="s1">else </span><span class="s0">{</span>
+            <span class="s0">gather(sourcePath);</span>
+        <span class="s0">}</span>
+    <span class="s0">});</span>
+
+    <span class="s1">if </span><span class="s0">(!tsEnabled) {</span>
+        <span class="s1">return </span><span class="s0">components;</span>
+    <span class="s0">}</span>
+
+    <span class="s0">const program = ts.createProgram(filepaths, {...tsconfig, esModuleInterop: </span><span class="s1">true</span><span class="s0">});</span>
+    <span class="s0">const checker = program.getTypeChecker();</span>
+
+    <span class="s0">const coerceValue = t =&gt; {</span>
+        <span class="s4">// May need to improve for shaped/list literals.</span>
+        <span class="s1">if </span><span class="s0">(t.isStringLiteral()) </span><span class="s1">return </span><span class="s0">`</span><span class="s2">'${t.value}'</span><span class="s0">`;</span>
+        <span class="s1">return </span><span class="s0">t.value;</span>
+    <span class="s0">};</span>
+
+    <span class="s0">const getComponentFromExport = exp =&gt; {</span>
+        <span class="s0">const decl = exp.valueDeclaration || exp.declarations[</span><span class="s3">0</span><span class="s0">];</span>
+        <span class="s0">const type = checker.getTypeOfSymbolAtLocation(exp, decl);</span>
+        <span class="s0">const typeSymbol = type.symbol || type.aliasSymbol;</span>
+
+        <span class="s1">if </span><span class="s0">(!typeSymbol) {</span>
+            <span class="s1">return </span><span class="s0">exp;</span>
+        <span class="s0">}</span>
+
+        <span class="s0">const symbolName = typeSymbol.getName();</span>
+
+        <span class="s1">if </span><span class="s0">(</span>
+            <span class="s0">(symbolName === </span><span class="s2">'MemoExoticComponent' </span><span class="s0">||</span>
+                <span class="s0">symbolName === </span><span class="s2">'ForwardRefExoticComponent'</span><span class="s0">) &amp;&amp;</span>
+            <span class="s0">exp.valueDeclaration &amp;&amp;</span>
+            <span class="s0">ts.isExportAssignment(exp.valueDeclaration) &amp;&amp;</span>
+            <span class="s0">ts.isCallExpression(exp.valueDeclaration.expression)</span>
+        <span class="s0">) {</span>
+            <span class="s0">const component = checker.getSymbolAtLocation(</span>
+                <span class="s0">exp.valueDeclaration.expression.arguments[</span><span class="s3">0</span><span class="s0">]</span>
+            <span class="s0">);</span>
+
+            <span class="s1">if </span><span class="s0">(component) </span><span class="s1">return </span><span class="s0">component;</span>
+        <span class="s0">}</span>
+        <span class="s1">return </span><span class="s0">exp;</span>
+    <span class="s0">};</span>
+
+    <span class="s0">const getParent = node =&gt; {</span>
+        <span class="s0">let parent = node;</span>
+        <span class="s1">while </span><span class="s0">(parent.parent) {</span>
+            <span class="s1">if </span><span class="s0">(parent.parent.kind === ts.SyntaxKind.SourceFile) {</span>
+                <span class="s4">// We want the parent before the source file.</span>
+                <span class="s1">break</span><span class="s0">;</span>
+            <span class="s0">}</span>
+            <span class="s0">parent = parent.parent;</span>
+        <span class="s0">}</span>
+        <span class="s1">return </span><span class="s0">parent;</span>
+    <span class="s0">};</span>
+
+    <span class="s0">const getEnum = typeObj =&gt; ({</span>
+        <span class="s0">name: </span><span class="s2">'enum'</span><span class="s0">,</span>
+        <span class="s0">value: typeObj.types.map(t =&gt; ({</span>
+            <span class="s0">value: coerceValue(t),</span>
+            <span class="s0">computed: </span><span class="s1">false</span>
+        <span class="s0">}))</span>
+    <span class="s0">});</span>
+
+    <span class="s0">const getUnion = (typeObj, propObj, parentType) =&gt; {</span>
+        <span class="s0">let name = </span><span class="s2">'union'</span><span class="s0">,</span>
+            <span class="s0">value;</span>
+
+        <span class="s4">// Union only do base types</span>
+        <span class="s0">value = typeObj.types</span>
+            <span class="s0">.filter(t =&gt; {</span>
+                <span class="s0">let typeName = t.intrinsicName;</span>
+                <span class="s1">if </span><span class="s0">(!typeName) {</span>
+                    <span class="s1">if </span><span class="s0">(t.members) {</span>
+                        <span class="s0">typeName = </span><span class="s2">'object'</span><span class="s0">;</span>
+                    <span class="s0">}</span>
+                <span class="s0">}</span>
+                <span class="s1">return </span><span class="s0">(</span>
+                    <span class="s0">unionSupport.includes(typeName) ||</span>
+                    <span class="s0">isArray(checker.typeToString(t))</span>
+                <span class="s0">);</span>
+            <span class="s0">})</span>
+            <span class="s0">.map(t =&gt; getPropType(t, propObj, parentType));</span>
+
+        <span class="s1">if </span><span class="s0">(!value.length) {</span>
+            <span class="s0">name = </span><span class="s2">'any'</span><span class="s0">;</span>
+            <span class="s0">value = undefined;</span>
+        <span class="s0">}</span>
+        <span class="s1">return </span><span class="s0">{</span>
+            <span class="s0">name,</span>
+            <span class="s0">value</span>
+        <span class="s0">};</span>
+    <span class="s0">};</span>
+
+    <span class="s0">const getPropTypeName = propName =&gt; {</span>
+        <span class="s1">if </span><span class="s0">(propName.includes(</span><span class="s2">'=&gt;'</span><span class="s0">) || propName === </span><span class="s2">'Function'</span><span class="s0">) {</span>
+            <span class="s1">return </span><span class="s2">'func'</span><span class="s0">;</span>
+        <span class="s0">} </span><span class="s1">else if </span><span class="s0">(propName === </span><span class="s2">'boolean'</span><span class="s0">) {</span>
+            <span class="s1">return </span><span class="s2">'bool'</span><span class="s0">;</span>
+        <span class="s0">} </span><span class="s1">else if </span><span class="s0">(propName === </span><span class="s2">'[]'</span><span class="s0">) {</span>
+            <span class="s1">return </span><span class="s2">'array'</span><span class="s0">;</span>
+        <span class="s0">} </span><span class="s1">else if </span><span class="s0">(</span>
+            <span class="s0">propName === </span><span class="s2">'Element' </span><span class="s0">||</span>
+            <span class="s0">propName === </span><span class="s2">'ReactNode' </span><span class="s0">||</span>
+            <span class="s0">propName === </span><span class="s2">'ReactElement'</span>
+        <span class="s0">) {</span>
+            <span class="s1">return </span><span class="s2">'node'</span><span class="s0">;</span>
+        <span class="s0">}</span>
+        <span class="s1">return </span><span class="s0">propName;</span>
+    <span class="s0">};</span>
+
+    <span class="s0">const getPropType = (propType, propObj, parentType = </span><span class="s1">null</span><span class="s0">) =&gt; {</span>
+        <span class="s4">// Types can get namespace prefixes or not.</span>
+        <span class="s0">let name = checker.typeToString(propType).replace(/^React\./, </span><span class="s2">''</span><span class="s0">);</span>
+        <span class="s0">let value, elements;</span>
+        <span class="s0">const raw = name;</span>
+
+        <span class="s0">const newParentType = (parentType || []).concat(raw)</span>
+
+        <span class="s1">if </span><span class="s0">(propType.isUnion()) {</span>
+            <span class="s1">if </span><span class="s0">(isUnionLiteral(propType)) {</span>
+                <span class="s1">return </span><span class="s0">{...getEnum(propType), raw};</span>
+            <span class="s0">} </span><span class="s1">else if </span><span class="s0">(raw.includes(</span><span class="s2">'|'</span><span class="s0">)) {</span>
+                <span class="s1">return </span><span class="s0">{...getUnion(propType, propObj, newParentType), raw};</span>
+            <span class="s0">}</span>
+        <span class="s0">}</span>
+
+        <span class="s0">name = getPropTypeName(name);</span>
+
+        <span class="s4">// Shapes &amp; array support.</span>
+        <span class="s1">if </span><span class="s0">(!PRIMITIVES.concat(</span><span class="s2">'enum'</span><span class="s0">, </span><span class="s2">'func'</span><span class="s0">, </span><span class="s2">'union'</span><span class="s0">).includes(name)) {</span>
+            <span class="s1">if </span><span class="s0">(</span>
+                <span class="s4">// Excluding object with arrays in the raw.</span>
+                <span class="s0">(name.includes(</span><span class="s2">'[]'</span><span class="s0">) &amp;&amp; name.endsWith(</span><span class="s2">&quot;]&quot;</span><span class="s0">)) ||</span>
+                <span class="s0">name.includes(</span><span class="s2">'Array'</span><span class="s0">)</span>
+            <span class="s0">) {</span>
+                <span class="s0">name = </span><span class="s2">'arrayOf'</span><span class="s0">;</span>
+                <span class="s0">const replaced = raw.replace(</span><span class="s2">'[]'</span><span class="s0">, </span><span class="s2">''</span><span class="s0">);</span>
+                <span class="s1">if </span><span class="s0">(unionSupport.includes(replaced)) {</span>
+                    <span class="s4">// Simple types are easier.</span>
+                    <span class="s0">value = {</span>
+                        <span class="s0">name: getPropTypeName(replaced),</span>
+                        <span class="s0">raw: replaced</span>
+                    <span class="s0">};</span>
+                <span class="s0">} </span><span class="s1">else </span><span class="s0">{</span>
+                    <span class="s4">// Complex types get the type parameter (Array&lt;type&gt;)</span>
+                    <span class="s0">const [nodeType] = checker.getTypeArguments(propType);</span>
+
+                    <span class="s1">if </span><span class="s0">(nodeType) {</span>
+                        <span class="s0">value = getPropType(</span>
+                            <span class="s0">nodeType, propObj, newParentType,</span>
+                        <span class="s0">);</span>
+                    <span class="s0">} </span><span class="s1">else </span><span class="s0">{</span>
+                        <span class="s4">// Not sure, might be unsupported here.</span>
+                        <span class="s0">name = </span><span class="s2">'array'</span><span class="s0">;</span>
+                    <span class="s0">}</span>
+                <span class="s0">}</span>
+            <span class="s0">} </span><span class="s1">else if </span><span class="s0">(</span>
+                <span class="s0">name === </span><span class="s2">'tuple' </span><span class="s0">||</span>
+                <span class="s0">(name.startsWith(</span><span class="s2">'['</span><span class="s0">) &amp;&amp; name.endsWith(</span><span class="s2">']'</span><span class="s0">))</span>
+            <span class="s0">) {</span>
+                <span class="s0">name = </span><span class="s2">'tuple'</span><span class="s0">;</span>
+                <span class="s0">elements = propType.resolvedTypeArguments.map(</span>
+                    <span class="s0">t =&gt; getPropType(t, propObj, newParentType)</span>
+                <span class="s0">);</span>
+            <span class="s0">} </span><span class="s1">else if </span><span class="s0">(</span>
+                <span class="s0">BANNED_TYPES.includes(name) ||</span>
+                <span class="s0">(parentType &amp;&amp; parentType.includes(name))</span>
+            <span class="s0">) {</span>
+                <span class="s0">console.error(`Warning nested type: ${name}`);</span>
+                <span class="s0">name = </span><span class="s2">'any'</span><span class="s0">;</span>
+            <span class="s0">} </span><span class="s1">else </span><span class="s0">{</span>
+                <span class="s0">name = </span><span class="s2">'shape'</span><span class="s0">;</span>
+                <span class="s4">// If the type is declared as union it will have a types attribute.</span>
+                <span class="s1">if </span><span class="s0">(propType.types &amp;&amp; propType.types.length) {</span>
+                    <span class="s1">if </span><span class="s0">(isUnionLiteral(propType)) {</span>
+                        <span class="s1">return </span><span class="s0">{...getEnum(propType), raw};</span>
+                    <span class="s0">}</span>
+                    <span class="s1">return </span><span class="s0">{</span>
+                        <span class="s0">...getUnion(propType, propObj, newParentType),</span>
+                        <span class="s0">raw</span>
+                    <span class="s0">};</span>
+                <span class="s0">} </span><span class="s1">else if </span><span class="s0">(propType.indexInfos &amp;&amp; propType.indexInfos.length) {</span>
+                    <span class="s0">const {type} = propType.indexInfos[</span><span class="s3">0</span><span class="s0">];</span>
+                    <span class="s0">name = </span><span class="s2">'objectOf'</span><span class="s0">;</span>
+                    <span class="s0">value = getPropType(type, propObj, newParentType);</span>
+                <span class="s0">} </span><span class="s1">else </span><span class="s0">{</span>
+                    <span class="s0">value = getProps(</span>
+                        <span class="s0">checker.getPropertiesOfType(propType),</span>
+                        <span class="s0">propObj,</span>
+                        <span class="s0">[],</span>
+                        <span class="s0">{},</span>
+                        <span class="s1">true</span><span class="s0">,</span>
+                        <span class="s0">newParentType,</span>
+                    <span class="s0">);</span>
+                <span class="s0">}</span>
+            <span class="s0">}</span>
+        <span class="s0">}</span>
+
+        <span class="s1">return </span><span class="s0">{</span>
+            <span class="s0">name,</span>
+            <span class="s0">value,</span>
+            <span class="s0">elements,</span>
+            <span class="s0">raw</span>
+        <span class="s0">};</span>
+    <span class="s0">};</span>
+
+    <span class="s0">const getDefaultProps = (symbol, source) =&gt; {</span>
+        <span class="s0">const statements = source.statements.filter(</span>
+            <span class="s0">stmt =&gt;</span>
+                <span class="s0">(!!stmt.name &amp;&amp;</span>
+                    <span class="s0">checker.getSymbolAtLocation(stmt.name) === symbol) ||</span>
+                <span class="s0">ts.isExpressionStatement(stmt) ||</span>
+                <span class="s0">ts.isVariableStatement(stmt)</span>
+        <span class="s0">);</span>
+        <span class="s1">return </span><span class="s0">statements.reduce((acc, statement) =&gt; {</span>
+            <span class="s0">let propMap = {};</span>
+
+            <span class="s0">statement.getChildren().forEach(child =&gt; {</span>
+                <span class="s0">let {right} = child;</span>
+                <span class="s1">if </span><span class="s0">(right &amp;&amp; ts.isIdentifier(right)) {</span>
+                    <span class="s0">const value = source.locals.get(right.escapedText);</span>
+                    <span class="s1">if </span><span class="s0">(</span>
+                        <span class="s0">value &amp;&amp;</span>
+                        <span class="s0">value.valueDeclaration &amp;&amp;</span>
+                        <span class="s0">ts.isVariableDeclaration(value.valueDeclaration) &amp;&amp;</span>
+                        <span class="s0">value.valueDeclaration.initializer</span>
+                    <span class="s0">) {</span>
+                        <span class="s0">right = value.valueDeclaration.initializer;</span>
+                    <span class="s0">}</span>
+                <span class="s0">}</span>
+                <span class="s1">if </span><span class="s0">(right) {</span>
+                    <span class="s0">const {properties} = right;</span>
+                    <span class="s1">if </span><span class="s0">(properties) {</span>
+                        <span class="s0">propMap = getDefaultPropsValues(properties);</span>
+                    <span class="s0">}</span>
+                <span class="s0">}</span>
+            <span class="s0">});</span>
+
+            <span class="s1">return </span><span class="s0">{</span>
+                <span class="s0">...acc,</span>
+                <span class="s0">...propMap</span>
+            <span class="s0">};</span>
+        <span class="s0">}, {});</span>
+    <span class="s0">};</span>
+
+    <span class="s0">const getPropComment = symbol =&gt; {</span>
+        <span class="s4">// Doesn't work too good with the JsDocTags losing indentation.</span>
+        <span class="s4">// But used only in props should be fine.</span>
+        <span class="s0">const comment = symbol.getDocumentationComment();</span>
+        <span class="s0">const tags = symbol.getJsDocTags();</span>
+        <span class="s1">if </span><span class="s0">(comment &amp;&amp; comment.length) {</span>
+            <span class="s1">return </span><span class="s0">comment</span>
+                <span class="s0">.map(c =&gt; c.text)</span>
+                <span class="s0">.concat(</span>
+                    <span class="s0">tags.map(t =&gt;</span>
+                        <span class="s0">[</span><span class="s2">'@'</span><span class="s0">, t.name].concat((t.text || []).map(e =&gt; e.text))</span>
+                    <span class="s0">)</span>
+                <span class="s0">)</span>
+                <span class="s0">.join(</span><span class="s2">'</span><span class="s5">\n</span><span class="s2">'</span><span class="s0">);</span>
+        <span class="s0">}</span>
+        <span class="s1">return </span><span class="s2">''</span><span class="s0">;</span>
+    <span class="s0">};</span>
+
+    <span class="s0">const getPropsForFunctionalComponent = type =&gt; {</span>
+        <span class="s0">const callSignatures = type.getCallSignatures();</span>
+
+        <span class="s1">for </span><span class="s0">(const sig of callSignatures) {</span>
+            <span class="s0">const params = sig.getParameters();</span>
+            <span class="s1">if </span><span class="s0">(params.length === </span><span class="s3">0</span><span class="s0">) {</span>
+                <span class="s1">continue</span><span class="s0">;</span>
+            <span class="s0">}</span>
+
+            <span class="s4">// There is only one parameter for functional components: props</span>
+            <span class="s0">const p = params[</span><span class="s3">0</span><span class="s0">];</span>
+            <span class="s1">if </span><span class="s0">(p.name === </span><span class="s2">'props' </span><span class="s0">|| params.length === </span><span class="s3">1</span><span class="s0">) {</span>
+                <span class="s1">return </span><span class="s0">p;</span>
+            <span class="s0">}</span>
+        <span class="s0">}</span>
+        <span class="s1">return null</span><span class="s0">;</span>
+    <span class="s0">};</span>
+
+    <span class="s0">const getPropsForClassComponent = (typeSymbol, source, defaultProps) =&gt; {</span>
+        <span class="s0">const childs = source.getChildAt(</span><span class="s3">0</span><span class="s0">);</span>
+        <span class="s0">let stop;</span>
+
+        <span class="s1">for </span><span class="s0">(let i = </span><span class="s3">0</span><span class="s0">, n = childs.getChildCount(); i &lt; n &amp;&amp; !stop; i++) {</span>
+            <span class="s0">const c = childs.getChildAt(i);</span>
+            <span class="s1">if </span><span class="s0">(!ts.isClassDeclaration(c)) </span><span class="s1">continue</span><span class="s0">;</span>
+
+            <span class="s1">if </span><span class="s0">(!c.heritageClauses) </span><span class="s1">continue</span><span class="s0">;</span>
+
+            <span class="s1">for </span><span class="s0">(const clause of c.heritageClauses) {</span>
+                <span class="s1">if </span><span class="s0">(clause.token !== ts.SyntaxKind.ExtendsKeyword) </span><span class="s1">continue</span><span class="s0">;</span>
+                <span class="s0">const t = clause.types[</span><span class="s3">0</span><span class="s0">];</span>
+                <span class="s0">const propType = t.typeArguments[</span><span class="s3">0</span><span class="s0">];</span>
+
+                <span class="s0">const type = checker.getTypeFromTypeNode(propType);</span>
+
+                <span class="s1">return </span><span class="s0">getProps(</span>
+                    <span class="s0">type.getProperties(),</span>
+                    <span class="s0">typeSymbol,</span>
+                    <span class="s0">[],</span>
+                    <span class="s0">defaultProps</span>
+                <span class="s0">);</span>
+            <span class="s0">}</span>
+        <span class="s0">}</span>
+    <span class="s0">};</span>
+
+    <span class="s0">const getDefaultPropsValues = properties =&gt;</span>
+        <span class="s0">properties.reduce((acc, p) =&gt; {</span>
+            <span class="s1">if </span><span class="s0">(!p.name || !p.initializer) {</span>
+                <span class="s1">return </span><span class="s0">acc;</span>
+            <span class="s0">}</span>
+            <span class="s0">let propName, value;</span>
+
+            <span class="s1">switch </span><span class="s0">(p.name.kind) {</span>
+                <span class="s1">case </span><span class="s0">ts.SyntaxKind.NumericLiteral:</span>
+                <span class="s1">case </span><span class="s0">ts.SyntaxKind.StringLiteral:</span>
+                <span class="s1">case </span><span class="s0">ts.SyntaxKind.Identifier:</span>
+                    <span class="s0">propName = p.name.text;</span>
+                    <span class="s1">break</span><span class="s0">;</span>
+                <span class="s1">case </span><span class="s0">ts.SyntaxKind.ComputedPropertyName:</span>
+                    <span class="s0">propName = p.name.getText();</span>
+                    <span class="s1">break</span><span class="s0">;</span>
+            <span class="s0">}</span>
+
+            <span class="s0">const {initializer} = p;</span>
+
+            <span class="s1">switch </span><span class="s0">(initializer.kind) {</span>
+                <span class="s1">case </span><span class="s0">ts.SyntaxKind.StringLiteral:</span>
+                    <span class="s0">value = `</span><span class="s2">'${initializer.text}'</span><span class="s0">`;</span>
+                    <span class="s1">break</span><span class="s0">;</span>
+                <span class="s1">case </span><span class="s0">ts.SyntaxKind.NumericLiteral:</span>
+                    <span class="s0">value = initializer.text;</span>
+                    <span class="s1">break</span><span class="s0">;</span>
+                <span class="s1">case </span><span class="s0">ts.SyntaxKind.NullKeyword:</span>
+                    <span class="s0">value = </span><span class="s2">'null'</span><span class="s0">;</span>
+                    <span class="s1">break</span><span class="s0">;</span>
+                <span class="s1">case </span><span class="s0">ts.SyntaxKind.FalseKeyword:</span>
+                    <span class="s0">value = </span><span class="s2">'false'</span><span class="s0">;</span>
+                    <span class="s1">break</span><span class="s0">;</span>
+                <span class="s1">case </span><span class="s0">ts.SyntaxKind.TrueKeyword:</span>
+                    <span class="s0">value = </span><span class="s2">'true'</span><span class="s0">;</span>
+                    <span class="s1">break</span><span class="s0">;</span>
+                <span class="s1">default</span><span class="s0">:</span>
+                    <span class="s1">try </span><span class="s0">{</span>
+                        <span class="s0">value = initializer.getText();</span>
+                    <span class="s0">} </span><span class="s1">catch </span><span class="s0">(e) {</span>
+                        <span class="s0">value = undefined;</span>
+                    <span class="s0">}</span>
+            <span class="s0">}</span>
+
+            <span class="s0">acc[propName] = {value, computed: </span><span class="s1">false</span><span class="s0">};</span>
+
+            <span class="s1">return </span><span class="s0">acc;</span>
+        <span class="s0">}, {});</span>
+
+    <span class="s0">const getDefaultPropsForClassComponent = (type, source) =&gt; {</span>
+        <span class="s4">// For class component, the type has its own property, then get the</span>
+        <span class="s4">// first declaration and one of them will be either</span>
+        <span class="s4">// an ObjectLiteralExpression or an Identifier which get in the</span>
+        <span class="s4">// newChild with the proper props.</span>
+        <span class="s0">const defaultProps = type.getProperty(</span><span class="s2">'defaultProps'</span><span class="s0">);</span>
+        <span class="s1">if </span><span class="s0">(!defaultProps) {</span>
+            <span class="s1">return </span><span class="s0">{};</span>
+        <span class="s0">}</span>
+        <span class="s0">const decl = defaultProps.getDeclarations()[</span><span class="s3">0</span><span class="s0">];</span>
+        <span class="s0">let propValues = {};</span>
+
+        <span class="s0">decl.getChildren().forEach(child =&gt; {</span>
+            <span class="s0">let newChild = child;</span>
+
+            <span class="s1">if </span><span class="s0">(ts.isIdentifier(child)) {</span>
+                <span class="s4">// There should be two identifier, the first is ignored.</span>
+                <span class="s0">const value = source.locals.get(child.escapedText);</span>
+                <span class="s1">if </span><span class="s0">(</span>
+                    <span class="s0">value &amp;&amp;</span>
+                    <span class="s0">value.valueDeclaration &amp;&amp;</span>
+                    <span class="s0">ts.isVariableDeclaration(value.valueDeclaration) &amp;&amp;</span>
+                    <span class="s0">value.valueDeclaration.initializer</span>
+                <span class="s0">) {</span>
+                    <span class="s0">newChild = value.valueDeclaration.initializer;</span>
+                <span class="s0">}</span>
+            <span class="s0">}</span>
+
+            <span class="s0">const {properties} = newChild;</span>
+            <span class="s1">if </span><span class="s0">(properties) {</span>
+                <span class="s0">propValues = getDefaultPropsValues(properties);</span>
+            <span class="s0">}</span>
+        <span class="s0">});</span>
+        <span class="s1">return </span><span class="s0">propValues;</span>
+    <span class="s0">};</span>
+
+    <span class="s0">const getProps = (</span>
+        <span class="s0">properties,</span>
+        <span class="s0">propsObj,</span>
+        <span class="s0">baseProps = [],</span>
+        <span class="s0">defaultProps = {},</span>
+        <span class="s0">flat = </span><span class="s1">false</span><span class="s0">,</span>
+        <span class="s0">parentType = </span><span class="s1">null</span><span class="s0">,</span>
+    <span class="s0">) =&gt; {</span>
+        <span class="s0">const results = {};</span>
+
+        <span class="s0">properties.forEach(prop =&gt; {</span>
+            <span class="s0">const name = prop.getName();</span>
+            <span class="s1">if </span><span class="s0">(isReservedPropName(name)) {</span>
+                <span class="s1">return</span><span class="s0">;</span>
+            <span class="s0">}</span>
+            <span class="s0">const propType = checker.getTypeOfSymbolAtLocation(</span>
+                <span class="s0">prop,</span>
+                <span class="s0">propsObj.valueDeclaration</span>
+            <span class="s0">);</span>
+            <span class="s0">const baseProp = baseProps.find(p =&gt; p.getName() === name);</span>
+            <span class="s0">const defaultValue = defaultProps[name];</span>
+
+            <span class="s0">const required =</span>
+                <span class="s0">!isOptional(prop) &amp;&amp;</span>
+                <span class="s0">(!baseProp || !isOptional(baseProp)) &amp;&amp;</span>
+                <span class="s0">defaultValue === undefined;</span>
+
+            <span class="s0">const description = getPropComment(prop);</span>
+
+            <span class="s0">let result = {</span>
+                <span class="s0">description,</span>
+                <span class="s0">required,</span>
+                <span class="s0">defaultValue</span>
+            <span class="s0">};</span>
+            <span class="s0">const type = getPropType(propType, propsObj, parentType);</span>
+            <span class="s4">// root object is inserted as type,</span>
+            <span class="s4">// otherwise it's flat in the value prop.</span>
+            <span class="s1">if </span><span class="s0">(!flat) {</span>
+                <span class="s0">result.type = type;</span>
+            <span class="s0">} </span><span class="s1">else </span><span class="s0">{</span>
+                <span class="s0">result = {...result, ...type};</span>
+            <span class="s0">}</span>
+
+            <span class="s0">results[name] = result;</span>
+        <span class="s0">});</span>
+
+        <span class="s1">return </span><span class="s0">results;</span>
+    <span class="s0">};</span>
+
+    <span class="s0">const getPropInfo = (propsObj, defaultProps) =&gt; {</span>
+        <span class="s0">const propsType = checker.getTypeOfSymbolAtLocation(</span>
+            <span class="s0">propsObj,</span>
+            <span class="s0">propsObj.valueDeclaration</span>
+        <span class="s0">);</span>
+        <span class="s0">const baseProps = propsType.getApparentProperties();</span>
+        <span class="s0">let propertiesOfProps = baseProps;</span>
+
+        <span class="s1">if </span><span class="s0">(propsType.isUnionOrIntersection()) {</span>
+            <span class="s0">propertiesOfProps = [</span>
+                <span class="s0">...checker.getAllPossiblePropertiesOfTypes(propsType.types),</span>
+                <span class="s0">...baseProps</span>
+            <span class="s0">];</span>
+
+            <span class="s1">if </span><span class="s0">(!propertiesOfProps.length) {</span>
+                <span class="s0">const subTypes = checker.getAllPossiblePropertiesOfTypes(</span>
+                    <span class="s0">propsType.types.reduce(</span>
+                        <span class="s0">(all, t) =&gt; [...all, ...(t.types || [])],</span>
+                        <span class="s0">[]</span>
+                    <span class="s0">)</span>
+                <span class="s0">);</span>
+                <span class="s0">propertiesOfProps = [...subTypes, ...baseProps];</span>
+            <span class="s0">}</span>
+        <span class="s0">}</span>
+
+        <span class="s1">return </span><span class="s0">getProps(propertiesOfProps, propsObj, baseProps, defaultProps);</span>
+    <span class="s0">};</span>
+
+    <span class="s0">zipArrays(filepaths, names).forEach(([filepath, name]) =&gt; {</span>
+        <span class="s0">const source = program.getSourceFile(filepath);</span>
+        <span class="s0">const moduleSymbol = checker.getSymbolAtLocation(source);</span>
+        <span class="s0">const exports = checker.getExportsOfModule(moduleSymbol);</span>
+
+        <span class="s0">exports.forEach(exp =&gt; {</span>
+            <span class="s0">let rootExp = getComponentFromExport(exp);</span>
+            <span class="s0">const declaration =</span>
+                <span class="s0">rootExp.valueDeclaration || rootExp.declarations[</span><span class="s3">0</span><span class="s0">];</span>
+            <span class="s0">const type = checker.getTypeOfSymbolAtLocation(</span>
+                <span class="s0">rootExp,</span>
+                <span class="s0">declaration</span>
+            <span class="s0">);</span>
+
+            <span class="s0">let commentSource = rootExp;</span>
+            <span class="s0">const typeSymbol = type.symbol || type.aliasSymbol;</span>
+            <span class="s0">const originalName = rootExp.getName();</span>
+
+            <span class="s1">if </span><span class="s0">(!rootExp.valueDeclaration) {</span>
+                <span class="s1">if </span><span class="s0">(</span>
+                    <span class="s0">originalName === </span><span class="s2">'default' </span><span class="s0">&amp;&amp;</span>
+                    <span class="s0">!typeSymbol &amp;&amp;</span>
+                    <span class="s0">(rootExp.flags &amp; ts.SymbolFlags.Alias) !== </span><span class="s3">0</span>
+                <span class="s0">) {</span>
+                    <span class="s4">// Some type of Exotic?</span>
+                    <span class="s0">commentSource =</span>
+                        <span class="s0">checker.getAliasedSymbol(</span>
+                            <span class="s0">commentSource</span>
+                        <span class="s0">).valueDeclaration;</span>
+                <span class="s0">} </span><span class="s1">else if </span><span class="s0">(!typeSymbol) {</span>
+                    <span class="s4">// Invalid component</span>
+                    <span class="s1">return null</span><span class="s0">;</span>
+                <span class="s0">} </span><span class="s1">else </span><span class="s0">{</span>
+                    <span class="s4">// Function components.</span>
+                    <span class="s0">rootExp = typeSymbol;</span>
+                    <span class="s0">commentSource = rootExp.valueDeclaration || rootExp.declarations[</span><span class="s3">0</span><span class="s0">];</span>
+                    <span class="s1">if </span><span class="s0">(</span>
+                        <span class="s0">commentSource &amp;&amp;</span>
+                        <span class="s0">commentSource.parent</span>
+                    <span class="s0">) {</span>
+                        <span class="s4">// Function with export later like `const MyComponent = (props) =&gt; &lt;&gt;&lt;/&gt;;`</span>
+                        <span class="s0">commentSource = getParent(</span>
+                            <span class="s0">commentSource.parent</span>
+                        <span class="s0">);</span>
+                    <span class="s0">}</span>
+                <span class="s0">}</span>
+            <span class="s0">} </span><span class="s1">else if </span><span class="s0">(</span>
+                <span class="s0">type.symbol &amp;&amp;</span>
+                <span class="s0">(ts.isPropertyAccessExpression(declaration) ||</span>
+                    <span class="s0">ts.isPropertyDeclaration(declaration))</span>
+            <span class="s0">) {</span>
+                <span class="s0">commentSource = type.symbol.declarations[</span><span class="s3">0</span><span class="s0">];</span>
+            <span class="s0">}</span>
+
+            <span class="s1">if </span><span class="s0">(commentSource.valueDeclaration) {</span>
+                <span class="s0">commentSource = commentSource.valueDeclaration; </span><span class="s4">// class components</span>
+                <span class="s1">if </span><span class="s0">(</span>
+                    <span class="s0">commentSource.parent &amp;&amp;</span>
+                    <span class="s0">commentSource.parent.kind !== ts.SyntaxKind.SourceFile</span>
+                <span class="s0">) {</span>
+                    <span class="s4">// Memo components</span>
+                    <span class="s0">commentSource = commentSource.parent;</span>
+                <span class="s0">}</span>
+            <span class="s0">}</span>
+
+            <span class="s0">let defaultProps = getDefaultProps(typeSymbol, source);</span>
+            <span class="s0">const propsType = getPropsForFunctionalComponent(type);</span>
+            <span class="s0">const isContext = !!type.getProperty(</span><span class="s2">'isContext'</span><span class="s0">);</span>
+
+            <span class="s0">let props;</span>
+
+            <span class="s1">if </span><span class="s0">(propsType) {</span>
+                <span class="s0">props = getPropInfo(propsType, defaultProps);</span>
+            <span class="s0">} </span><span class="s1">else </span><span class="s0">{</span>
+                <span class="s0">defaultProps = getDefaultPropsForClassComponent(type, source);</span>
+                <span class="s0">props = getPropsForClassComponent(</span>
+                    <span class="s0">typeSymbol,</span>
+                    <span class="s0">source,</span>
+                    <span class="s0">defaultProps</span>
+                <span class="s0">);</span>
+            <span class="s0">}</span>
+
+            <span class="s1">if </span><span class="s0">(!props) {</span>
+                <span class="s4">// Ensure empty components has props.</span>
+                <span class="s0">props = {};</span>
+            <span class="s0">}</span>
+
+            <span class="s0">const fullText = source.getFullText();</span>
+            <span class="s0">let description = </span><span class="s2">''</span><span class="s0">;</span>
+            <span class="s0">const commentRanges = ts.getLeadingCommentRanges(</span>
+                <span class="s0">fullText,</span>
+                <span class="s0">commentSource.getFullStart()</span>
+            <span class="s0">);</span>
+            <span class="s1">if </span><span class="s0">(commentRanges &amp;&amp; commentRanges.length) {</span>
+                <span class="s0">description = commentRanges</span>
+                    <span class="s0">.map(r =&gt;</span>
+                        <span class="s0">fullText</span>
+                            <span class="s0">.slice(r.pos + </span><span class="s3">4</span><span class="s0">, r.end - </span><span class="s3">3</span><span class="s0">)</span>
+                            <span class="s0">.split(</span><span class="s2">'</span><span class="s5">\n</span><span class="s2">'</span><span class="s0">)</span>
+                            <span class="s0">.map(s =&gt; s.slice(</span><span class="s3">3</span><span class="s0">, s.length))</span>
+                            <span class="s0">.filter(e =&gt; e)</span>
+                            <span class="s0">.join(</span><span class="s2">'</span><span class="s5">\n</span><span class="s2">'</span><span class="s0">)</span>
+                    <span class="s0">)</span>
+                    <span class="s0">.join(</span><span class="s2">''</span><span class="s0">);</span>
+            <span class="s0">}</span>
+            <span class="s0">const doc = {</span>
+                <span class="s0">displayName: name,</span>
+                <span class="s0">description,</span>
+                <span class="s0">props,</span>
+                <span class="s0">isContext</span>
+            <span class="s0">};</span>
+            <span class="s0">docstringWarning(doc);</span>
+            <span class="s0">components[cleanPath(filepath)] = doc;</span>
+        <span class="s0">});</span>
+    <span class="s0">});</span>
+
+    <span class="s1">return </span><span class="s0">components;</span>
+<span class="s0">}</span>
+
+<span class="s0">const metadata = gatherComponents(Array.isArray(src) ? src : [src]);</span>
+<span class="s1">if </span><span class="s0">(!failedBuild) {</span>
+    <span class="s0">process.stdout.write(JSON.stringify(metadata, </span><span class="s1">null</span><span class="s0">, </span><span class="s3">2</span><span class="s0">));</span>
+<span class="s0">} </span><span class="s1">else </span><span class="s0">{</span>
+    <span class="s0">logError(</span><span class="s2">'extract-meta failed'</span><span class="s0">);</span>
+    <span class="s0">process.exit(</span><span class="s3">1</span><span class="s0">);</span>
+<span class="s0">}</span>
+</pre>
+</body>
+</html>

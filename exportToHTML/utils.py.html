@@ -1,0 +1,118 @@
+<html>
+<head>
+<title>utils.py</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #cc7832;}
+.s1 { color: #a9b7c6;}
+.s2 { color: #808080;}
+.s3 { color: #6a8759;}
+.s4 { color: #6897bb;}
+.s5 { color: #629755; font-style: italic;}
+</style>
+</head>
+<body bgcolor="#1e1f22">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+utils.py</font>
+</center></td></tr></table>
+<pre><span class="s0">from </span><span class="s1">typing </span><span class="s0">import </span><span class="s1">Dict</span><span class="s0">, </span><span class="s1">Generator</span>
+
+<span class="s0">from </span><span class="s1">pip._vendor.requests.models </span><span class="s0">import </span><span class="s1">CONTENT_CHUNK_SIZE</span><span class="s0">, </span><span class="s1">Response</span>
+
+<span class="s0">from </span><span class="s1">pip._internal.exceptions </span><span class="s0">import </span><span class="s1">NetworkConnectionError</span>
+
+<span class="s2"># The following comments and HTTP headers were originally added by</span>
+<span class="s2"># Donald Stufft in git commit 22c562429a61bb77172039e480873fb239dd8c03.</span>
+<span class="s2">#</span>
+<span class="s2"># We use Accept-Encoding: identity here because requests defaults to</span>
+<span class="s2"># accepting compressed responses. This breaks in a variety of ways</span>
+<span class="s2"># depending on how the server is configured.</span>
+<span class="s2"># - Some servers will notice that the file isn't a compressible file</span>
+<span class="s2">#   and will leave the file alone and with an empty Content-Encoding</span>
+<span class="s2"># - Some servers will notice that the file is already compressed and</span>
+<span class="s2">#   will leave the file alone, adding a Content-Encoding: gzip header</span>
+<span class="s2"># - Some servers won't notice anything at all and will take a file</span>
+<span class="s2">#   that's already been compressed and compress it again, and set</span>
+<span class="s2">#   the Content-Encoding: gzip header</span>
+<span class="s2"># By setting this to request only the identity encoding we're hoping</span>
+<span class="s2"># to eliminate the third case.  Hopefully there does not exist a server</span>
+<span class="s2"># which when given a file will notice it is already compressed and that</span>
+<span class="s2"># you're not asking for a compressed file and will then decompress it</span>
+<span class="s2"># before sending because if that's the case I don't think it'll ever be</span>
+<span class="s2"># possible to make this work.</span>
+<span class="s1">HEADERS: Dict[str</span><span class="s0">, </span><span class="s1">str] = {</span><span class="s3">&quot;Accept-Encoding&quot;</span><span class="s1">: </span><span class="s3">&quot;identity&quot;</span><span class="s1">}</span>
+
+
+<span class="s0">def </span><span class="s1">raise_for_status(resp: Response) -&gt; </span><span class="s0">None</span><span class="s1">:</span>
+    <span class="s1">http_error_msg = </span><span class="s3">&quot;&quot;</span>
+    <span class="s0">if </span><span class="s1">isinstance(resp.reason</span><span class="s0">, </span><span class="s1">bytes):</span>
+        <span class="s2"># We attempt to decode utf-8 first because some servers</span>
+        <span class="s2"># choose to localize their reason strings. If the string</span>
+        <span class="s2"># isn't utf-8, we fall back to iso-8859-1 for all other</span>
+        <span class="s2"># encodings.</span>
+        <span class="s0">try</span><span class="s1">:</span>
+            <span class="s1">reason = resp.reason.decode(</span><span class="s3">&quot;utf-8&quot;</span><span class="s1">)</span>
+        <span class="s0">except </span><span class="s1">UnicodeDecodeError:</span>
+            <span class="s1">reason = resp.reason.decode(</span><span class="s3">&quot;iso-8859-1&quot;</span><span class="s1">)</span>
+    <span class="s0">else</span><span class="s1">:</span>
+        <span class="s1">reason = resp.reason</span>
+
+    <span class="s0">if </span><span class="s4">400 </span><span class="s1">&lt;= resp.status_code &lt; </span><span class="s4">500</span><span class="s1">:</span>
+        <span class="s1">http_error_msg = (</span>
+            <span class="s3">f&quot;</span><span class="s0">{</span><span class="s1">resp.status_code</span><span class="s0">} </span><span class="s3">Client Error: </span><span class="s0">{</span><span class="s1">reason</span><span class="s0">} </span><span class="s3">for url: </span><span class="s0">{</span><span class="s1">resp.url</span><span class="s0">}</span><span class="s3">&quot;</span>
+        <span class="s1">)</span>
+
+    <span class="s0">elif </span><span class="s4">500 </span><span class="s1">&lt;= resp.status_code &lt; </span><span class="s4">600</span><span class="s1">:</span>
+        <span class="s1">http_error_msg = (</span>
+            <span class="s3">f&quot;</span><span class="s0">{</span><span class="s1">resp.status_code</span><span class="s0">} </span><span class="s3">Server Error: </span><span class="s0">{</span><span class="s1">reason</span><span class="s0">} </span><span class="s3">for url: </span><span class="s0">{</span><span class="s1">resp.url</span><span class="s0">}</span><span class="s3">&quot;</span>
+        <span class="s1">)</span>
+
+    <span class="s0">if </span><span class="s1">http_error_msg:</span>
+        <span class="s0">raise </span><span class="s1">NetworkConnectionError(http_error_msg</span><span class="s0">, </span><span class="s1">response=resp)</span>
+
+
+<span class="s0">def </span><span class="s1">response_chunks(</span>
+    <span class="s1">response: Response</span><span class="s0">, </span><span class="s1">chunk_size: int = CONTENT_CHUNK_SIZE</span>
+<span class="s1">) -&gt; Generator[bytes</span><span class="s0">, None, None</span><span class="s1">]:</span>
+    <span class="s5">&quot;&quot;&quot;Given a requests Response, provide the data chunks.&quot;&quot;&quot;</span>
+    <span class="s0">try</span><span class="s1">:</span>
+        <span class="s2"># Special case for urllib3.</span>
+        <span class="s0">for </span><span class="s1">chunk </span><span class="s0">in </span><span class="s1">response.raw.stream(</span>
+            <span class="s1">chunk_size</span><span class="s0">,</span>
+            <span class="s2"># We use decode_content=False here because we don't</span>
+            <span class="s2"># want urllib3 to mess with the raw bytes we get</span>
+            <span class="s2"># from the server. If we decompress inside of</span>
+            <span class="s2"># urllib3 then we cannot verify the checksum</span>
+            <span class="s2"># because the checksum will be of the compressed</span>
+            <span class="s2"># file. This breakage will only occur if the</span>
+            <span class="s2"># server adds a Content-Encoding header, which</span>
+            <span class="s2"># depends on how the server was configured:</span>
+            <span class="s2"># - Some servers will notice that the file isn't a</span>
+            <span class="s2">#   compressible file and will leave the file alone</span>
+            <span class="s2">#   and with an empty Content-Encoding</span>
+            <span class="s2"># - Some servers will notice that the file is</span>
+            <span class="s2">#   already compressed and will leave the file</span>
+            <span class="s2">#   alone and will add a Content-Encoding: gzip</span>
+            <span class="s2">#   header</span>
+            <span class="s2"># - Some servers won't notice anything at all and</span>
+            <span class="s2">#   will take a file that's already been compressed</span>
+            <span class="s2">#   and compress it again and set the</span>
+            <span class="s2">#   Content-Encoding: gzip header</span>
+            <span class="s2">#</span>
+            <span class="s2"># By setting this not to decode automatically we</span>
+            <span class="s2"># hope to eliminate problems with the second case.</span>
+            <span class="s1">decode_content=</span><span class="s0">False,</span>
+        <span class="s1">):</span>
+            <span class="s0">yield </span><span class="s1">chunk</span>
+    <span class="s0">except </span><span class="s1">AttributeError:</span>
+        <span class="s2"># Standard file-like object.</span>
+        <span class="s0">while True</span><span class="s1">:</span>
+            <span class="s1">chunk = response.raw.read(chunk_size)</span>
+            <span class="s0">if not </span><span class="s1">chunk:</span>
+                <span class="s0">break</span>
+            <span class="s0">yield </span><span class="s1">chunk</span>
+</pre>
+</body>
+</html>

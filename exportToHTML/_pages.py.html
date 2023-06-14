@@ -1,0 +1,459 @@
+<html>
+<head>
+<title>_pages.py</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #cc7832;}
+.s1 { color: #a9b7c6;}
+.s2 { color: #629755; font-style: italic;}
+.s3 { color: #6a8759;}
+.s4 { color: #6897bb;}
+.s5 { color: #808080;}
+</style>
+</head>
+<body bgcolor="#1e1f22">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+_pages.py</font>
+</center></td></tr></table>
+<pre><span class="s0">import </span><span class="s1">collections</span>
+<span class="s0">import </span><span class="s1">importlib</span>
+<span class="s0">import </span><span class="s1">os</span>
+<span class="s0">import </span><span class="s1">re</span>
+<span class="s0">import </span><span class="s1">sys</span>
+<span class="s0">from </span><span class="s1">fnmatch </span><span class="s0">import </span><span class="s1">fnmatch</span>
+<span class="s0">from </span><span class="s1">pathlib </span><span class="s0">import </span><span class="s1">Path</span>
+<span class="s0">from </span><span class="s1">os.path </span><span class="s0">import </span><span class="s1">isfile</span><span class="s0">, </span><span class="s1">join</span>
+<span class="s0">from </span><span class="s1">urllib.parse </span><span class="s0">import </span><span class="s1">parse_qs</span>
+
+<span class="s0">import </span><span class="s1">flask</span>
+
+<span class="s0">from </span><span class="s1">. </span><span class="s0">import </span><span class="s1">_validate</span>
+<span class="s0">from </span><span class="s1">._utils </span><span class="s0">import </span><span class="s1">AttributeDict</span>
+<span class="s0">from </span><span class="s1">._get_paths </span><span class="s0">import </span><span class="s1">get_relative_path</span>
+<span class="s0">from </span><span class="s1">._callback_context </span><span class="s0">import </span><span class="s1">context_value</span>
+<span class="s0">from </span><span class="s1">._get_app </span><span class="s0">import </span><span class="s1">get_app</span>
+
+
+<span class="s1">CONFIG = AttributeDict()</span>
+<span class="s1">PAGE_REGISTRY = collections.OrderedDict()</span>
+
+
+<span class="s0">def </span><span class="s1">_infer_image(module):</span>
+    <span class="s2">&quot;&quot;&quot; 
+    Return: 
+    - A page specific image: `assets/&lt;module&gt;.&lt;extension&gt;` is used, e.g. `assets/weekly_analytics.png` 
+    - A generic app image at `assets/app.&lt;extension&gt;` 
+    - A logo at `assets/logo.&lt;extension&gt;` 
+    &quot;&quot;&quot;</span>
+    <span class="s1">assets_folder = CONFIG.assets_folder</span>
+    <span class="s1">valid_extensions = [</span><span class="s3">&quot;apng&quot;</span><span class="s0">, </span><span class="s3">&quot;avif&quot;</span><span class="s0">, </span><span class="s3">&quot;gif&quot;</span><span class="s0">, </span><span class="s3">&quot;jpeg&quot;</span><span class="s0">, </span><span class="s3">&quot;jpg&quot;</span><span class="s0">, </span><span class="s3">&quot;png&quot;</span><span class="s0">, </span><span class="s3">&quot;svg&quot;</span><span class="s0">, </span><span class="s3">&quot;webp&quot;</span><span class="s1">]</span>
+    <span class="s1">page_id = module.split(</span><span class="s3">&quot;.&quot;</span><span class="s1">)[-</span><span class="s4">1</span><span class="s1">]</span>
+    <span class="s1">files_in_assets = []</span>
+
+    <span class="s0">if </span><span class="s1">os.path.exists(assets_folder):</span>
+        <span class="s1">files_in_assets = [</span>
+            <span class="s1">f </span><span class="s0">for </span><span class="s1">f </span><span class="s0">in </span><span class="s1">os.listdir(assets_folder) </span><span class="s0">if </span><span class="s1">isfile(join(assets_folder</span><span class="s0">, </span><span class="s1">f))</span>
+        <span class="s1">]</span>
+    <span class="s1">app_file = </span><span class="s0">None</span>
+    <span class="s1">logo_file = </span><span class="s0">None</span>
+    <span class="s0">for </span><span class="s1">fn </span><span class="s0">in </span><span class="s1">files_in_assets:</span>
+        <span class="s1">fn_without_extension</span><span class="s0">, </span><span class="s1">_</span><span class="s0">, </span><span class="s1">extension = fn.partition(</span><span class="s3">&quot;.&quot;</span><span class="s1">)</span>
+        <span class="s0">if </span><span class="s1">extension.lower() </span><span class="s0">in </span><span class="s1">valid_extensions:</span>
+            <span class="s0">if </span><span class="s1">(</span>
+                <span class="s1">fn_without_extension == page_id</span>
+                <span class="s0">or </span><span class="s1">fn_without_extension == page_id.replace(</span><span class="s3">&quot;_&quot;</span><span class="s0">, </span><span class="s3">&quot;-&quot;</span><span class="s1">)</span>
+            <span class="s1">):</span>
+                <span class="s0">return </span><span class="s1">fn</span>
+
+            <span class="s0">if </span><span class="s1">fn_without_extension == </span><span class="s3">&quot;app&quot;</span><span class="s1">:</span>
+                <span class="s1">app_file = fn</span>
+
+            <span class="s0">if </span><span class="s1">fn_without_extension == </span><span class="s3">&quot;logo&quot;</span><span class="s1">:</span>
+                <span class="s1">logo_file = fn</span>
+
+    <span class="s0">if </span><span class="s1">app_file:</span>
+        <span class="s0">return </span><span class="s1">app_file</span>
+
+    <span class="s0">return </span><span class="s1">logo_file</span>
+
+
+<span class="s0">def </span><span class="s1">_module_name_to_page_name(module_name):</span>
+    <span class="s0">return </span><span class="s1">module_name.split(</span><span class="s3">&quot;.&quot;</span><span class="s1">)[-</span><span class="s4">1</span><span class="s1">].replace(</span><span class="s3">&quot;_&quot;</span><span class="s0">, </span><span class="s3">&quot; &quot;</span><span class="s1">).capitalize()</span>
+
+
+<span class="s0">def </span><span class="s1">_infer_path(module_name</span><span class="s0">, </span><span class="s1">template):</span>
+    <span class="s0">if </span><span class="s1">template </span><span class="s0">is None</span><span class="s1">:</span>
+        <span class="s0">if </span><span class="s1">CONFIG.pages_folder:</span>
+            <span class="s1">pages_module = str(Path(CONFIG.pages_folder).name)</span>
+            <span class="s1">path = (</span>
+                <span class="s1">module_name.split(pages_module)[-</span><span class="s4">1</span><span class="s1">]</span>
+                <span class="s1">.replace(</span><span class="s3">&quot;_&quot;</span><span class="s0">, </span><span class="s3">&quot;-&quot;</span><span class="s1">)</span>
+                <span class="s1">.replace(</span><span class="s3">&quot;.&quot;</span><span class="s0">, </span><span class="s3">&quot;/&quot;</span><span class="s1">)</span>
+                <span class="s1">.lower()</span>
+            <span class="s1">)</span>
+        <span class="s0">else</span><span class="s1">:</span>
+            <span class="s1">path = module_name.replace(</span><span class="s3">&quot;_&quot;</span><span class="s0">, </span><span class="s3">&quot;-&quot;</span><span class="s1">).replace(</span><span class="s3">&quot;.&quot;</span><span class="s0">, </span><span class="s3">&quot;/&quot;</span><span class="s1">).lower()</span>
+    <span class="s0">else</span><span class="s1">:</span>
+        <span class="s5"># replace the variables in the template with &quot;none&quot; to create a default path if</span>
+        <span class="s5"># no path is supplied</span>
+        <span class="s1">path = re.sub(</span><span class="s3">&quot;&lt;.*?&gt;&quot;</span><span class="s0">, </span><span class="s3">&quot;none&quot;</span><span class="s0">, </span><span class="s1">template)</span>
+    <span class="s1">path = </span><span class="s3">&quot;/&quot; </span><span class="s1">+ path </span><span class="s0">if not </span><span class="s1">path.startswith(</span><span class="s3">&quot;/&quot;</span><span class="s1">) </span><span class="s0">else </span><span class="s1">path</span>
+    <span class="s0">return </span><span class="s1">path</span>
+
+
+<span class="s0">def </span><span class="s1">_module_name_is_package(module_name):</span>
+    <span class="s0">return </span><span class="s1">(</span>
+        <span class="s1">module_name </span><span class="s0">in </span><span class="s1">sys.modules</span>
+        <span class="s0">and </span><span class="s1">Path(sys.modules[module_name].__file__).name == </span><span class="s3">&quot;__init__.py&quot;</span>
+    <span class="s1">)</span>
+
+
+<span class="s0">def </span><span class="s1">_path_to_module_name(path):</span>
+    <span class="s0">return </span><span class="s1">str(path).replace(</span><span class="s3">&quot;.py&quot;</span><span class="s0">, </span><span class="s3">&quot;&quot;</span><span class="s1">).strip(os.sep).replace(os.sep</span><span class="s0">, </span><span class="s3">&quot;.&quot;</span><span class="s1">)</span>
+
+
+<span class="s0">def </span><span class="s1">_infer_module_name(page_path):</span>
+    <span class="s1">relative_path = page_path.split(CONFIG.pages_folder)[-</span><span class="s4">1</span><span class="s1">]</span>
+    <span class="s1">module = _path_to_module_name(relative_path)</span>
+    <span class="s1">proj_root = flask.helpers.get_root_path(CONFIG.name)</span>
+    <span class="s0">if </span><span class="s1">CONFIG.pages_folder.startswith(proj_root):</span>
+        <span class="s1">parent_path = CONFIG.pages_folder[len(proj_root) :]</span>
+    <span class="s0">else</span><span class="s1">:</span>
+        <span class="s1">parent_path = CONFIG.pages_folder</span>
+    <span class="s1">parent_module = _path_to_module_name(parent_path)</span>
+
+    <span class="s1">module_name = </span><span class="s3">f&quot;</span><span class="s0">{</span><span class="s1">parent_module</span><span class="s0">}</span><span class="s3">.</span><span class="s0">{</span><span class="s1">module</span><span class="s0">}</span><span class="s3">&quot;</span>
+    <span class="s0">if </span><span class="s1">_module_name_is_package(CONFIG.name):</span>
+        <span class="s5"># Only prefix with CONFIG.name when it's an imported package name</span>
+        <span class="s1">module_name = </span><span class="s3">f&quot;</span><span class="s0">{</span><span class="s1">CONFIG.name</span><span class="s0">}</span><span class="s3">.</span><span class="s0">{</span><span class="s1">module_name</span><span class="s0">}</span><span class="s3">&quot;</span>
+    <span class="s0">return </span><span class="s1">module_name</span>
+
+
+<span class="s0">def </span><span class="s1">_parse_query_string(search):</span>
+    <span class="s0">if </span><span class="s1">search </span><span class="s0">and </span><span class="s1">len(search) &gt; </span><span class="s4">0 </span><span class="s0">and </span><span class="s1">search[</span><span class="s4">0</span><span class="s1">] == </span><span class="s3">&quot;?&quot;</span><span class="s1">:</span>
+        <span class="s1">search = search[</span><span class="s4">1</span><span class="s1">:]</span>
+    <span class="s0">else</span><span class="s1">:</span>
+        <span class="s0">return </span><span class="s1">{}</span>
+
+    <span class="s1">parsed_qs = {}</span>
+    <span class="s0">for </span><span class="s1">(k</span><span class="s0">, </span><span class="s1">v) </span><span class="s0">in </span><span class="s1">parse_qs(search).items():</span>
+        <span class="s1">v = v[</span><span class="s4">0</span><span class="s1">] </span><span class="s0">if </span><span class="s1">len(v) == </span><span class="s4">1 </span><span class="s0">else </span><span class="s1">v</span>
+        <span class="s1">parsed_qs[k] = v</span>
+    <span class="s0">return </span><span class="s1">parsed_qs</span>
+
+
+<span class="s0">def </span><span class="s1">_parse_path_variables(pathname</span><span class="s0">, </span><span class="s1">path_template):</span>
+    <span class="s2">&quot;&quot;&quot; 
+    creates the dict of path variables passed to the layout 
+    e.g. path_template= &quot;/asset/&lt;asset_id&gt;&quot; 
+         if pathname provided by the browser is &quot;/assets/a100&quot; 
+         returns **{&quot;asset_id&quot;: &quot;a100&quot;} 
+    &quot;&quot;&quot;</span>
+
+    <span class="s5"># parse variable definitions e.g. &lt;var_name&gt; from template</span>
+    <span class="s5"># and create pattern to match</span>
+    <span class="s1">wildcard_pattern = re.sub(</span><span class="s3">&quot;&lt;.*?&gt;&quot;</span><span class="s0">, </span><span class="s3">&quot;*&quot;</span><span class="s0">, </span><span class="s1">path_template)</span>
+    <span class="s1">var_pattern = re.sub(</span><span class="s3">&quot;&lt;.*?&gt;&quot;</span><span class="s0">, </span><span class="s3">&quot;(.*)&quot;</span><span class="s0">, </span><span class="s1">path_template)</span>
+
+    <span class="s5"># check that static sections of the pathname match the template</span>
+    <span class="s0">if not </span><span class="s1">fnmatch(pathname</span><span class="s0">, </span><span class="s1">wildcard_pattern):</span>
+        <span class="s0">return None</span>
+
+    <span class="s5"># parse variable names e.g. var_name from template</span>
+    <span class="s1">var_names = re.findall(</span><span class="s3">&quot;&lt;(.*?)&gt;&quot;</span><span class="s0">, </span><span class="s1">path_template)</span>
+
+    <span class="s5"># parse variables from path</span>
+    <span class="s1">variables = re.findall(var_pattern</span><span class="s0">, </span><span class="s1">pathname)</span>
+    <span class="s1">variables = variables[</span><span class="s4">0</span><span class="s1">] </span><span class="s0">if </span><span class="s1">isinstance(variables[</span><span class="s4">0</span><span class="s1">]</span><span class="s0">, </span><span class="s1">tuple) </span><span class="s0">else </span><span class="s1">variables</span>
+
+    <span class="s0">return </span><span class="s1">dict(zip(var_names</span><span class="s0">, </span><span class="s1">variables))</span>
+
+
+<span class="s0">def </span><span class="s1">_create_redirect_function(redirect_to):</span>
+    <span class="s0">def </span><span class="s1">redirect():</span>
+        <span class="s0">return </span><span class="s1">flask.redirect(redirect_to</span><span class="s0">, </span><span class="s1">code=</span><span class="s4">301</span><span class="s1">)</span>
+
+    <span class="s0">return </span><span class="s1">redirect</span>
+
+
+<span class="s0">def </span><span class="s1">_set_redirect(redirect_from</span><span class="s0">, </span><span class="s1">path):</span>
+    <span class="s1">app = get_app()</span>
+    <span class="s0">if </span><span class="s1">redirect_from </span><span class="s0">and </span><span class="s1">len(redirect_from):</span>
+        <span class="s0">for </span><span class="s1">redirect </span><span class="s0">in </span><span class="s1">redirect_from:</span>
+            <span class="s1">fullname = app.get_relative_path(redirect)</span>
+            <span class="s1">app.server.add_url_rule(</span>
+                <span class="s1">fullname</span><span class="s0">,</span>
+                <span class="s1">fullname</span><span class="s0">,</span>
+                <span class="s1">_create_redirect_function(app.get_relative_path(path))</span><span class="s0">,</span>
+            <span class="s1">)</span>
+
+
+<span class="s0">def </span><span class="s1">register_page(</span>
+    <span class="s1">module</span><span class="s0">,</span>
+    <span class="s1">path=</span><span class="s0">None,</span>
+    <span class="s1">path_template=</span><span class="s0">None,</span>
+    <span class="s1">name=</span><span class="s0">None,</span>
+    <span class="s1">order=</span><span class="s0">None,</span>
+    <span class="s1">title=</span><span class="s0">None,</span>
+    <span class="s1">description=</span><span class="s0">None,</span>
+    <span class="s1">image=</span><span class="s0">None,</span>
+    <span class="s1">image_url=</span><span class="s0">None,</span>
+    <span class="s1">redirect_from=</span><span class="s0">None,</span>
+    <span class="s1">layout=</span><span class="s0">None,</span>
+    <span class="s1">**kwargs</span><span class="s0">,</span>
+<span class="s1">):</span>
+    <span class="s2">&quot;&quot;&quot; 
+    Assigns the variables to `dash.page_registry` as an `OrderedDict` 
+    (ordered by `order`). 
+ 
+    `dash.page_registry` is used by `pages_plugin` to set up the layouts as 
+    a multi-page Dash app. This includes the URL routing callbacks 
+    (using `dcc.Location`) and the HTML templates to include title, 
+    meta description, and the meta description image. 
+ 
+    `dash.page_registry` can also be used by Dash developers to create the 
+    page navigation links or by template authors. 
+ 
+    - `module`: 
+       The module path where this page's `layout` is defined. Often `__name__`. 
+ 
+    - `path`: 
+       URL Path, e.g. `/` or `/home-page`. 
+       If not supplied, will be inferred from the `path_template` or `module`, 
+       e.g. based on path_template: `/asset/&lt;asset_id` to `/asset/none` 
+       e.g. based on module: `pages.weekly_analytics` to `/weekly-analytics` 
+ 
+    - `relative_path`: 
+        The path with `requests_pathname_prefix` prefixed before it. 
+        Use this path when specifying local URL paths that will work 
+        in environments regardless of what `requests_pathname_prefix` is. 
+        In some deployment environments, like Dash Enterprise, 
+        `requests_pathname_prefix` is set to the application name, 
+        e.g. `my-dash-app`. 
+        When working locally, `requests_pathname_prefix` might be unset and 
+        so a relative URL like `/page-2` can just be `/page-2`. 
+        However, when the app is deployed to a URL like `/my-dash-app`, then 
+        `relative_path` will be `/my-dash-app/page-2`. 
+ 
+    - `path_template`: 
+       Add variables to a URL by marking sections with &lt;variable_name&gt;. The layout function 
+       then receives the &lt;variable_name&gt; as a keyword argument. 
+       e.g. path_template= &quot;/asset/&lt;asset_id&gt;&quot; 
+            then if pathname in browser is &quot;/assets/a100&quot; then layout will receive **{&quot;asset_id&quot;:&quot;a100&quot;} 
+ 
+    - `name`: 
+       The name of the link. 
+       If not supplied, will be inferred from `module`, 
+       e.g. `pages.weekly_analytics` to `Weekly analytics` 
+ 
+    - `order`: 
+       The order of the pages in `page_registry`. 
+       If not supplied, then the filename is used and the page with path `/` has 
+       order `0` 
+ 
+    - `title`: 
+       (string or function) The name of the page &lt;title&gt;. That is, what appears in the browser title. 
+       If not supplied, will use the supplied `name` or will be inferred by module, 
+       e.g. `pages.weekly_analytics` to `Weekly analytics` 
+ 
+    - `description`: 
+       (string or function) The &lt;meta type=&quot;description&quot;&gt;&lt;/meta&gt;. 
+       If not supplied, then nothing is supplied. 
+ 
+    - `image`: 
+       The meta description image used by social media platforms. 
+       If not supplied, then it looks for the following images in `assets/`: 
+        - A page specific image: `assets/&lt;module&gt;.&lt;extension&gt;` is used, e.g. `assets/weekly_analytics.png` 
+        - A generic app image at `assets/app.&lt;extension&gt;` 
+        - A logo at `assets/logo.&lt;extension&gt;` 
+        When inferring the image file, it will look for the following extensions: 
+        APNG, AVIF, GIF, JPEG, JPG, PNG, SVG, WebP. 
+ 
+    -  `image_url`: 
+       Overrides the image property and sets the `&lt;image&gt;` meta tag to the provided image URL. 
+ 
+    - `redirect_from`: 
+       A list of paths that should redirect to this page. 
+       For example: `redirect_from=['/v2', '/v3']` 
+ 
+    - `layout`: 
+       The layout function or component for this page. 
+       If not supplied, then looks for `layout` from within the supplied `module`. 
+ 
+    - `**kwargs`: 
+       Arbitrary keyword arguments that can be stored 
+ 
+    *** 
+ 
+    `page_registry` stores the original property that was passed in under 
+    `supplied_&lt;property&gt;` and the coerced property under `&lt;property&gt;`. 
+    For example, if this was called: 
+    ``` 
+    register_page( 
+        'pages.historical_outlook', 
+        name='Our historical view', 
+        custom_key='custom value' 
+    ) 
+    ``` 
+    Then this will appear in `page_registry`: 
+    ``` 
+    OrderedDict([ 
+        ( 
+            'pages.historical_outlook', 
+            dict( 
+                module='pages.historical_outlook', 
+ 
+                supplied_path=None, 
+                path='/historical-outlook', 
+ 
+                supplied_name='Our historical view', 
+                name='Our historical view', 
+ 
+                supplied_title=None, 
+                title='Our historical view' 
+ 
+                supplied_layout=None, 
+                layout=&lt;function pages.historical_outlook.layout&gt;, 
+ 
+                custom_key='custom value' 
+            ) 
+        ), 
+    ]) 
+    ``` 
+    &quot;&quot;&quot;</span>
+    <span class="s0">if </span><span class="s1">context_value.get().get(</span><span class="s3">&quot;ignore_register_page&quot;</span><span class="s1">):</span>
+        <span class="s0">return</span>
+
+    <span class="s1">_validate.validate_use_pages(CONFIG)</span>
+
+    <span class="s1">page = dict(</span>
+        <span class="s1">module=_validate.validate_module_name(module)</span><span class="s0">,</span>
+        <span class="s1">supplied_path=path</span><span class="s0">,</span>
+        <span class="s1">path_template=path_template</span><span class="s0">,</span>
+        <span class="s1">path=path </span><span class="s0">if </span><span class="s1">path </span><span class="s0">is not None else </span><span class="s1">_infer_path(module</span><span class="s0">, </span><span class="s1">path_template)</span><span class="s0">,</span>
+        <span class="s1">supplied_name=name</span><span class="s0">,</span>
+        <span class="s1">name=name </span><span class="s0">if </span><span class="s1">name </span><span class="s0">is not None else </span><span class="s1">_module_name_to_page_name(module)</span><span class="s0">,</span>
+    <span class="s1">)</span>
+    <span class="s1">page.update(</span>
+        <span class="s1">supplied_title=title</span><span class="s0">,</span>
+        <span class="s1">title=(title </span><span class="s0">if </span><span class="s1">title </span><span class="s0">is not None else </span><span class="s1">page[</span><span class="s3">&quot;name&quot;</span><span class="s1">])</span><span class="s0">,</span>
+    <span class="s1">)</span>
+    <span class="s1">page.update(</span>
+        <span class="s1">description=description </span><span class="s0">if </span><span class="s1">description </span><span class="s0">else </span><span class="s3">&quot;&quot;</span><span class="s0">,</span>
+        <span class="s1">order=order</span><span class="s0">,</span>
+        <span class="s1">supplied_order=order</span><span class="s0">,</span>
+        <span class="s1">supplied_layout=layout</span><span class="s0">,</span>
+        <span class="s1">**kwargs</span><span class="s0">,</span>
+    <span class="s1">)</span>
+    <span class="s1">page.update(</span>
+        <span class="s1">supplied_image=image</span><span class="s0">,</span>
+        <span class="s1">image=(image </span><span class="s0">if </span><span class="s1">image </span><span class="s0">is not None else </span><span class="s1">_infer_image(module))</span><span class="s0">,</span>
+        <span class="s1">image_url=image_url</span><span class="s0">,</span>
+    <span class="s1">)</span>
+    <span class="s1">page.update(redirect_from=_set_redirect(redirect_from</span><span class="s0">, </span><span class="s1">page[</span><span class="s3">&quot;path&quot;</span><span class="s1">]))</span>
+
+    <span class="s1">PAGE_REGISTRY[module] = page</span>
+
+    <span class="s0">if </span><span class="s1">page[</span><span class="s3">&quot;path_template&quot;</span><span class="s1">]:</span>
+        <span class="s1">_validate.validate_template(page[</span><span class="s3">&quot;path_template&quot;</span><span class="s1">])</span>
+
+    <span class="s0">if </span><span class="s1">layout </span><span class="s0">is not None</span><span class="s1">:</span>
+        <span class="s5"># Override the layout found in the file set during `plug`</span>
+        <span class="s1">PAGE_REGISTRY[module][</span><span class="s3">&quot;layout&quot;</span><span class="s1">] = layout</span>
+
+    <span class="s5"># set home page order</span>
+    <span class="s1">order_supplied = any(</span>
+        <span class="s1">p[</span><span class="s3">&quot;supplied_order&quot;</span><span class="s1">] </span><span class="s0">is not None for </span><span class="s1">p </span><span class="s0">in </span><span class="s1">PAGE_REGISTRY.values()</span>
+    <span class="s1">)</span>
+
+    <span class="s0">for </span><span class="s1">p </span><span class="s0">in </span><span class="s1">PAGE_REGISTRY.values():</span>
+        <span class="s1">p[</span><span class="s3">&quot;order&quot;</span><span class="s1">] = (</span>
+            <span class="s4">0 </span><span class="s0">if </span><span class="s1">p[</span><span class="s3">&quot;path&quot;</span><span class="s1">] == </span><span class="s3">&quot;/&quot; </span><span class="s0">and not </span><span class="s1">order_supplied </span><span class="s0">else </span><span class="s1">p[</span><span class="s3">&quot;supplied_order&quot;</span><span class="s1">]</span>
+        <span class="s1">)</span>
+        <span class="s1">p[</span><span class="s3">&quot;relative_path&quot;</span><span class="s1">] = get_relative_path(p[</span><span class="s3">&quot;path&quot;</span><span class="s1">])</span>
+
+    <span class="s5"># Sort by order and module, then by module</span>
+    <span class="s0">for </span><span class="s1">page </span><span class="s0">in </span><span class="s1">sorted(</span>
+        <span class="s1">PAGE_REGISTRY.values()</span><span class="s0">,</span>
+        <span class="s1">key=</span><span class="s0">lambda </span><span class="s1">i: (str(i.get(</span><span class="s3">&quot;order&quot;</span><span class="s0">, </span><span class="s1">i[</span><span class="s3">&quot;module&quot;</span><span class="s1">]))</span><span class="s0">, </span><span class="s1">i[</span><span class="s3">&quot;module&quot;</span><span class="s1">])</span><span class="s0">,</span>
+    <span class="s1">):</span>
+        <span class="s1">PAGE_REGISTRY.move_to_end(page[</span><span class="s3">&quot;module&quot;</span><span class="s1">])</span>
+
+
+<span class="s0">def </span><span class="s1">_path_to_page(path_id):</span>
+    <span class="s1">path_variables = </span><span class="s0">None</span>
+    <span class="s0">for </span><span class="s1">page </span><span class="s0">in </span><span class="s1">PAGE_REGISTRY.values():</span>
+        <span class="s0">if </span><span class="s1">page[</span><span class="s3">&quot;path_template&quot;</span><span class="s1">]:</span>
+            <span class="s1">template_id = page[</span><span class="s3">&quot;path_template&quot;</span><span class="s1">].strip(</span><span class="s3">&quot;/&quot;</span><span class="s1">)</span>
+            <span class="s1">path_variables = _parse_path_variables(path_id</span><span class="s0">, </span><span class="s1">template_id)</span>
+            <span class="s0">if </span><span class="s1">path_variables:</span>
+                <span class="s0">return </span><span class="s1">page</span><span class="s0">, </span><span class="s1">path_variables</span>
+        <span class="s0">if </span><span class="s1">path_id == page[</span><span class="s3">&quot;path&quot;</span><span class="s1">].strip(</span><span class="s3">&quot;/&quot;</span><span class="s1">):</span>
+            <span class="s0">return </span><span class="s1">page</span><span class="s0">, </span><span class="s1">path_variables</span>
+    <span class="s0">return </span><span class="s1">{}</span><span class="s0">, None</span>
+
+
+<span class="s0">def </span><span class="s1">_page_meta_tags(app):</span>
+    <span class="s1">start_page</span><span class="s0">, </span><span class="s1">path_variables = _path_to_page(flask.request.path.strip(</span><span class="s3">&quot;/&quot;</span><span class="s1">))</span>
+
+    <span class="s5"># use the supplied image_url or create url based on image in the assets folder</span>
+    <span class="s1">image = start_page.get(</span><span class="s3">&quot;image&quot;</span><span class="s0">, </span><span class="s3">&quot;&quot;</span><span class="s1">)</span>
+    <span class="s0">if </span><span class="s1">image:</span>
+        <span class="s1">image = app.get_asset_url(image)</span>
+    <span class="s1">assets_image_url = (</span>
+        <span class="s3">&quot;&quot;</span><span class="s1">.join([flask.request.url_root</span><span class="s0">, </span><span class="s1">image.lstrip(</span><span class="s3">&quot;/&quot;</span><span class="s1">)]) </span><span class="s0">if </span><span class="s1">image </span><span class="s0">else None</span>
+    <span class="s1">)</span>
+    <span class="s1">supplied_image_url = start_page.get(</span><span class="s3">&quot;image_url&quot;</span><span class="s1">)</span>
+    <span class="s1">image_url = supplied_image_url </span><span class="s0">if </span><span class="s1">supplied_image_url </span><span class="s0">else </span><span class="s1">assets_image_url</span>
+
+    <span class="s1">title = start_page.get(</span><span class="s3">&quot;title&quot;</span><span class="s0">, </span><span class="s1">app.title)</span>
+    <span class="s0">if </span><span class="s1">callable(title):</span>
+        <span class="s1">title = title(**path_variables) </span><span class="s0">if </span><span class="s1">path_variables </span><span class="s0">else </span><span class="s1">title()</span>
+
+    <span class="s1">description = start_page.get(</span><span class="s3">&quot;description&quot;</span><span class="s0">, </span><span class="s3">&quot;&quot;</span><span class="s1">)</span>
+    <span class="s0">if </span><span class="s1">callable(description):</span>
+        <span class="s1">description = description(**path_variables) </span><span class="s0">if </span><span class="s1">path_variables </span><span class="s0">else </span><span class="s1">description()</span>
+
+    <span class="s0">return </span><span class="s1">[</span>
+        <span class="s1">{</span><span class="s3">&quot;name&quot;</span><span class="s1">: </span><span class="s3">&quot;description&quot;</span><span class="s0">, </span><span class="s3">&quot;content&quot;</span><span class="s1">: description}</span><span class="s0">,</span>
+        <span class="s1">{</span><span class="s3">&quot;property&quot;</span><span class="s1">: </span><span class="s3">&quot;twitter:card&quot;</span><span class="s0">, </span><span class="s3">&quot;content&quot;</span><span class="s1">: </span><span class="s3">&quot;summary_large_image&quot;</span><span class="s1">}</span><span class="s0">,</span>
+        <span class="s1">{</span><span class="s3">&quot;property&quot;</span><span class="s1">: </span><span class="s3">&quot;twitter:url&quot;</span><span class="s0">, </span><span class="s3">&quot;content&quot;</span><span class="s1">: flask.request.url}</span><span class="s0">,</span>
+        <span class="s1">{</span><span class="s3">&quot;property&quot;</span><span class="s1">: </span><span class="s3">&quot;twitter:title&quot;</span><span class="s0">, </span><span class="s3">&quot;content&quot;</span><span class="s1">: title}</span><span class="s0">,</span>
+        <span class="s1">{</span><span class="s3">&quot;property&quot;</span><span class="s1">: </span><span class="s3">&quot;twitter:description&quot;</span><span class="s0">, </span><span class="s3">&quot;content&quot;</span><span class="s1">: description}</span><span class="s0">,</span>
+        <span class="s1">{</span><span class="s3">&quot;property&quot;</span><span class="s1">: </span><span class="s3">&quot;twitter:image&quot;</span><span class="s0">, </span><span class="s3">&quot;content&quot;</span><span class="s1">: image_url </span><span class="s0">or </span><span class="s3">&quot;&quot;</span><span class="s1">}</span><span class="s0">,</span>
+        <span class="s1">{</span><span class="s3">&quot;property&quot;</span><span class="s1">: </span><span class="s3">&quot;og:title&quot;</span><span class="s0">, </span><span class="s3">&quot;content&quot;</span><span class="s1">: title}</span><span class="s0">,</span>
+        <span class="s1">{</span><span class="s3">&quot;property&quot;</span><span class="s1">: </span><span class="s3">&quot;og:type&quot;</span><span class="s0">, </span><span class="s3">&quot;content&quot;</span><span class="s1">: </span><span class="s3">&quot;website&quot;</span><span class="s1">}</span><span class="s0">,</span>
+        <span class="s1">{</span><span class="s3">&quot;property&quot;</span><span class="s1">: </span><span class="s3">&quot;og:description&quot;</span><span class="s0">, </span><span class="s3">&quot;content&quot;</span><span class="s1">: description}</span><span class="s0">,</span>
+        <span class="s1">{</span><span class="s3">&quot;property&quot;</span><span class="s1">: </span><span class="s3">&quot;og:image&quot;</span><span class="s0">, </span><span class="s3">&quot;content&quot;</span><span class="s1">: image_url </span><span class="s0">or </span><span class="s3">&quot;&quot;</span><span class="s1">}</span><span class="s0">,</span>
+    <span class="s1">]</span>
+
+
+<span class="s0">def </span><span class="s1">_import_layouts_from_pages(pages_folder):</span>
+    <span class="s0">for </span><span class="s1">root</span><span class="s0">, </span><span class="s1">dirs</span><span class="s0">, </span><span class="s1">files </span><span class="s0">in </span><span class="s1">os.walk(pages_folder):</span>
+        <span class="s1">dirs[:] = [d </span><span class="s0">for </span><span class="s1">d </span><span class="s0">in </span><span class="s1">dirs </span><span class="s0">if not </span><span class="s1">d.startswith(</span><span class="s3">&quot;.&quot;</span><span class="s1">) </span><span class="s0">and not </span><span class="s1">d.startswith(</span><span class="s3">&quot;_&quot;</span><span class="s1">)]</span>
+        <span class="s0">for </span><span class="s1">file </span><span class="s0">in </span><span class="s1">files:</span>
+            <span class="s0">if </span><span class="s1">file.startswith(</span><span class="s3">&quot;_&quot;</span><span class="s1">) </span><span class="s0">or </span><span class="s1">file.startswith(</span><span class="s3">&quot;.&quot;</span><span class="s1">) </span><span class="s0">or not </span><span class="s1">file.endswith(</span><span class="s3">&quot;.py&quot;</span><span class="s1">):</span>
+                <span class="s0">continue</span>
+            <span class="s1">page_path = os.path.join(root</span><span class="s0">, </span><span class="s1">file)</span>
+            <span class="s0">with </span><span class="s1">open(page_path</span><span class="s0">, </span><span class="s1">encoding=</span><span class="s3">&quot;utf-8&quot;</span><span class="s1">) </span><span class="s0">as </span><span class="s1">f:</span>
+                <span class="s1">content = f.read()</span>
+                <span class="s0">if </span><span class="s3">&quot;register_page&quot; </span><span class="s0">not in </span><span class="s1">content:</span>
+                    <span class="s0">continue</span>
+
+            <span class="s1">module_name = _infer_module_name(page_path)</span>
+            <span class="s1">spec = importlib.util.spec_from_file_location(module_name</span><span class="s0">, </span><span class="s1">page_path)</span>
+            <span class="s1">page_module = importlib.util.module_from_spec(spec)</span>
+            <span class="s1">spec.loader.exec_module(page_module)</span>
+            <span class="s1">sys.modules[module_name] = page_module</span>
+
+            <span class="s0">if </span><span class="s1">(</span>
+                <span class="s1">module_name </span><span class="s0">in </span><span class="s1">PAGE_REGISTRY</span>
+                <span class="s0">and not </span><span class="s1">PAGE_REGISTRY[module_name][</span><span class="s3">&quot;supplied_layout&quot;</span><span class="s1">]</span>
+            <span class="s1">):</span>
+                <span class="s1">_validate.validate_pages_layout(module_name</span><span class="s0">, </span><span class="s1">page_module)</span>
+                <span class="s1">PAGE_REGISTRY[module_name][</span><span class="s3">&quot;layout&quot;</span><span class="s1">] = getattr(page_module</span><span class="s0">, </span><span class="s3">&quot;layout&quot;</span><span class="s1">)</span>
+</pre>
+</body>
+</html>

@@ -1,0 +1,97 @@
+<html>
+<head>
+<title>_dash_renderer.py</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #cc7832;}
+.s1 { color: #a9b7c6;}
+.s2 { color: #6a8759;}
+.s3 { color: #808080;}
+</style>
+</head>
+<body bgcolor="#1e1f22">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+_dash_renderer.py</font>
+</center></td></tr></table>
+<pre><span class="s0">import </span><span class="s1">os</span>
+
+<span class="s1">__version__ = </span><span class="s2">&quot;1.15.3&quot;</span>
+
+<span class="s1">_available_react_versions = {</span><span class="s2">&quot;16.14.0&quot;</span><span class="s0">, </span><span class="s2">&quot;18.2.0&quot;</span><span class="s1">}</span>
+<span class="s1">_available_reactdom_versions = {</span><span class="s2">&quot;16.14.0&quot;</span><span class="s0">, </span><span class="s2">&quot;18.2.0&quot;</span><span class="s1">}</span>
+<span class="s1">_js_dist_dependencies = []  </span><span class="s3"># to be set by _set_react_version</span>
+
+
+<span class="s0">def </span><span class="s1">_set_react_version(v_react</span><span class="s0">, </span><span class="s1">v_reactdom=</span><span class="s0">None</span><span class="s1">):</span>
+    <span class="s0">if not </span><span class="s1">v_reactdom:</span>
+        <span class="s1">v_reactdom = v_react</span>
+
+    <span class="s1">react_err = </span><span class="s2">f&quot;looking for one of </span><span class="s0">{</span><span class="s1">_available_react_versions</span><span class="s0">}</span><span class="s2">, found </span><span class="s0">{</span><span class="s1">v_react</span><span class="s0">}</span><span class="s2">&quot;</span>
+    <span class="s1">reactdom_err = (</span>
+        <span class="s2">f&quot;looking for one of </span><span class="s0">{</span><span class="s1">_available_reactdom_versions</span><span class="s0">}</span><span class="s2">, found </span><span class="s0">{</span><span class="s1">v_reactdom</span><span class="s0">}</span><span class="s2">&quot;</span>
+    <span class="s1">)</span>
+    <span class="s0">assert </span><span class="s1">v_react </span><span class="s0">in </span><span class="s1">_available_react_versions</span><span class="s0">, </span><span class="s1">react_err</span>
+    <span class="s0">assert </span><span class="s1">v_reactdom </span><span class="s0">in </span><span class="s1">_available_reactdom_versions</span><span class="s0">, </span><span class="s1">reactdom_err</span>
+
+    <span class="s1">_js_dist_dependencies[:] = [</span>
+        <span class="s1">{</span>
+            <span class="s2">&quot;external_url&quot;</span><span class="s1">: {</span>
+                <span class="s2">&quot;prod&quot;</span><span class="s1">: [</span>
+                    <span class="s2">&quot;https://unpkg.com/@babel/polyfill@7.12.1/dist/polyfill.min.js&quot;</span><span class="s0">,</span>
+                    <span class="s2">f&quot;https://unpkg.com/react@</span><span class="s0">{</span><span class="s1">v_react</span><span class="s0">}</span><span class="s2">/umd/react.production.min.js&quot;</span><span class="s0">,</span>
+                    <span class="s2">f&quot;https://unpkg.com/react-dom@</span><span class="s0">{</span><span class="s1">v_reactdom</span><span class="s0">}</span><span class="s2">/umd/react-dom.production.min.js&quot;</span><span class="s0">,</span>
+                    <span class="s2">&quot;https://unpkg.com/prop-types@15.8.1/prop-types.min.js&quot;</span><span class="s0">,</span>
+                <span class="s1">]</span><span class="s0">,</span>
+                <span class="s2">&quot;dev&quot;</span><span class="s1">: [</span>
+                    <span class="s2">&quot;https://unpkg.com/@babel/polyfill@7.12.1/dist/polyfill.min.js&quot;</span><span class="s0">,</span>
+                    <span class="s2">f&quot;https://unpkg.com/react@</span><span class="s0">{</span><span class="s1">v_react</span><span class="s0">}</span><span class="s2">/umd/react.development.js&quot;</span><span class="s0">,</span>
+                    <span class="s2">f&quot;https://unpkg.com/react-dom@</span><span class="s0">{</span><span class="s1">v_reactdom</span><span class="s0">}</span><span class="s2">/umd/react-dom.development.js&quot;</span><span class="s0">,</span>
+                    <span class="s2">&quot;https://unpkg.com/prop-types@15.8.1/prop-types.js&quot;</span><span class="s0">,</span>
+                <span class="s1">]</span><span class="s0">,</span>
+            <span class="s1">}</span><span class="s0">,</span>
+            <span class="s2">&quot;relative_package_path&quot;</span><span class="s1">: {</span>
+                <span class="s2">&quot;prod&quot;</span><span class="s1">: [</span>
+                    <span class="s2">&quot;deps/polyfill@7.12.1.min.js&quot;</span><span class="s0">,</span>
+                    <span class="s2">f&quot;deps/react@</span><span class="s0">{</span><span class="s1">v_react</span><span class="s0">}</span><span class="s2">.min.js&quot;</span><span class="s0">,</span>
+                    <span class="s2">f&quot;deps/react-dom@</span><span class="s0">{</span><span class="s1">v_reactdom</span><span class="s0">}</span><span class="s2">.min.js&quot;</span><span class="s0">,</span>
+                    <span class="s2">&quot;deps/prop-types@15.8.1.min.js&quot;</span><span class="s0">,</span>
+                <span class="s1">]</span><span class="s0">,</span>
+                <span class="s2">&quot;dev&quot;</span><span class="s1">: [</span>
+                    <span class="s2">&quot;deps/polyfill@7.12.1.min.js&quot;</span><span class="s0">,</span>
+                    <span class="s2">f&quot;deps/react@</span><span class="s0">{</span><span class="s1">v_react</span><span class="s0">}</span><span class="s2">.js&quot;</span><span class="s0">,</span>
+                    <span class="s2">f&quot;deps/react-dom@</span><span class="s0">{</span><span class="s1">v_reactdom</span><span class="s0">}</span><span class="s2">.js&quot;</span><span class="s0">,</span>
+                    <span class="s2">&quot;deps/prop-types@15.8.1.js&quot;</span><span class="s0">,</span>
+                <span class="s1">]</span><span class="s0">,</span>
+            <span class="s1">}</span><span class="s0">,</span>
+            <span class="s2">&quot;namespace&quot;</span><span class="s1">: </span><span class="s2">&quot;dash&quot;</span><span class="s0">,</span>
+        <span class="s1">}</span>
+    <span class="s1">]</span>
+
+
+<span class="s1">_env_react_version = os.getenv(</span><span class="s2">&quot;REACT_VERSION&quot;</span><span class="s1">)</span>
+<span class="s0">if </span><span class="s1">_env_react_version:</span>
+    <span class="s1">_set_react_version(_env_react_version)</span>
+    <span class="s1">print(</span><span class="s2">f&quot;EXPERIMENTAL: Using react version from env: </span><span class="s0">{</span><span class="s1">_env_react_version</span><span class="s0">}</span><span class="s2">&quot;</span><span class="s1">)</span>
+<span class="s0">else</span><span class="s1">:</span>
+    <span class="s1">_set_react_version(</span><span class="s2">&quot;16.14.0&quot;</span><span class="s0">, </span><span class="s2">&quot;16.14.0&quot;</span><span class="s1">)</span>
+
+<span class="s1">_js_dist = [</span>
+    <span class="s1">{</span>
+        <span class="s2">&quot;relative_package_path&quot;</span><span class="s1">: </span><span class="s2">&quot;dash-renderer/build/dash_renderer.min.js&quot;</span><span class="s0">,</span>
+        <span class="s2">&quot;dev_package_path&quot;</span><span class="s1">: </span><span class="s2">&quot;dash-renderer/build/dash_renderer.dev.js&quot;</span><span class="s0">,</span>
+        <span class="s2">&quot;external_url&quot;</span><span class="s1">: </span><span class="s2">&quot;https://unpkg.com/dash-renderer@1.15.3&quot;</span>
+        <span class="s2">&quot;/build/dash_renderer.min.js&quot;</span><span class="s0">,</span>
+        <span class="s2">&quot;namespace&quot;</span><span class="s1">: </span><span class="s2">&quot;dash&quot;</span><span class="s0">,</span>
+    <span class="s1">}</span><span class="s0">,</span>
+    <span class="s1">{</span>
+        <span class="s2">&quot;relative_package_path&quot;</span><span class="s1">: </span><span class="s2">&quot;dash-renderer/build/dash_renderer.min.js.map&quot;</span><span class="s0">,</span>
+        <span class="s2">&quot;dev_package_path&quot;</span><span class="s1">: </span><span class="s2">&quot;dash-renderer/build/dash_renderer.dev.js.map&quot;</span><span class="s0">,</span>
+        <span class="s2">&quot;namespace&quot;</span><span class="s1">: </span><span class="s2">&quot;dash&quot;</span><span class="s0">,</span>
+        <span class="s2">&quot;dynamic&quot;</span><span class="s1">: </span><span class="s0">True,</span>
+    <span class="s1">}</span><span class="s0">,</span>
+<span class="s1">]</span>
+</pre>
+</body>
+</html>

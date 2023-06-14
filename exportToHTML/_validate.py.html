@@ -1,0 +1,574 @@
+<html>
+<head>
+<title>_validate.py</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #cc7832;}
+.s1 { color: #a9b7c6;}
+.s2 { color: #6897bb;}
+.s3 { color: #6a8759;}
+.s4 { color: #808080;}
+.s5 { color: #629755; font-style: italic;}
+</style>
+</head>
+<body bgcolor="#1e1f22">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+_validate.py</font>
+</center></td></tr></table>
+<pre><span class="s0">from </span><span class="s1">collections.abc </span><span class="s0">import </span><span class="s1">MutableSequence</span>
+<span class="s0">import </span><span class="s1">re</span>
+<span class="s0">from </span><span class="s1">textwrap </span><span class="s0">import </span><span class="s1">dedent</span>
+<span class="s0">from </span><span class="s1">keyword </span><span class="s0">import </span><span class="s1">iskeyword</span>
+<span class="s0">import </span><span class="s1">flask</span>
+
+<span class="s0">from </span><span class="s1">._grouping </span><span class="s0">import </span><span class="s1">grouping_len</span><span class="s0">, </span><span class="s1">map_grouping</span>
+<span class="s0">from </span><span class="s1">.development.base_component </span><span class="s0">import </span><span class="s1">Component</span>
+<span class="s0">from </span><span class="s1">. </span><span class="s0">import </span><span class="s1">exceptions</span>
+<span class="s0">from </span><span class="s1">._utils </span><span class="s0">import </span><span class="s1">(</span>
+    <span class="s1">patch_collections_abc</span><span class="s0">,</span>
+    <span class="s1">stringify_id</span><span class="s0">,</span>
+    <span class="s1">to_json</span><span class="s0">,</span>
+    <span class="s1">coerce_to_list</span><span class="s0">,</span>
+    <span class="s1">clean_property_name</span><span class="s0">,</span>
+<span class="s1">)</span>
+
+
+<span class="s0">def </span><span class="s1">validate_callback(outputs</span><span class="s0">, </span><span class="s1">inputs</span><span class="s0">, </span><span class="s1">state</span><span class="s0">, </span><span class="s1">extra_args</span><span class="s0">, </span><span class="s1">types):</span>
+    <span class="s1">Input</span><span class="s0">, </span><span class="s1">Output</span><span class="s0">, </span><span class="s1">State = types</span>
+    <span class="s0">if </span><span class="s1">extra_args:</span>
+        <span class="s0">if not </span><span class="s1">isinstance(extra_args[</span><span class="s2">0</span><span class="s1">]</span><span class="s0">, </span><span class="s1">(Output</span><span class="s0">, </span><span class="s1">Input</span><span class="s0">, </span><span class="s1">State)):</span>
+            <span class="s0">raise </span><span class="s1">exceptions.IncorrectTypeException(</span>
+                <span class="s1">dedent(</span>
+                    <span class="s3">f&quot;&quot;&quot;</span>
+                    <span class="s3">Callback arguments must be `Output`, `Input`, or `State` objects,</span>
+                    <span class="s3">optionally wrapped in a list or tuple. We found (possibly after</span>
+                    <span class="s3">unwrapping a list or tuple):</span>
+                    <span class="s0">{</span><span class="s1">repr(extra_args[</span><span class="s2">0</span><span class="s1">])</span><span class="s0">}</span>
+                    <span class="s3">&quot;&quot;&quot;</span>
+                <span class="s1">)</span>
+            <span class="s1">)</span>
+
+        <span class="s0">raise </span><span class="s1">exceptions.IncorrectTypeException(</span>
+            <span class="s1">dedent(</span>
+                <span class="s3">f&quot;&quot;&quot;</span>
+                <span class="s3">In a callback definition, you must provide all Outputs first,</span>
+                <span class="s3">then all Inputs, then all States. After this item:</span>
+                <span class="s0">{</span><span class="s1">(outputs + inputs + state)[-</span><span class="s2">1</span><span class="s1">]</span><span class="s0">!r}</span>
+                <span class="s3">we found this item next:</span>
+                <span class="s0">{</span><span class="s1">extra_args[</span><span class="s2">0</span><span class="s1">]</span><span class="s0">!r}</span>
+                <span class="s3">&quot;&quot;&quot;</span>
+            <span class="s1">)</span>
+        <span class="s1">)</span>
+
+    <span class="s0">for </span><span class="s1">args </span><span class="s0">in </span><span class="s1">[outputs</span><span class="s0">, </span><span class="s1">inputs</span><span class="s0">, </span><span class="s1">state]:</span>
+        <span class="s0">for </span><span class="s1">arg </span><span class="s0">in </span><span class="s1">args:</span>
+            <span class="s1">validate_callback_arg(arg)</span>
+
+
+<span class="s0">def </span><span class="s1">validate_callback_arg(arg):</span>
+    <span class="s0">if not </span><span class="s1">isinstance(getattr(arg</span><span class="s0">, </span><span class="s3">&quot;component_property&quot;</span><span class="s0">, None</span><span class="s1">)</span><span class="s0">, </span><span class="s1">str):</span>
+        <span class="s0">raise </span><span class="s1">exceptions.IncorrectTypeException(</span>
+            <span class="s1">dedent(</span>
+                <span class="s3">f&quot;&quot;&quot;</span>
+                <span class="s3">component_property must be a string, found </span><span class="s0">{</span><span class="s1">arg.component_property</span><span class="s0">!r}</span>
+                <span class="s3">&quot;&quot;&quot;</span>
+            <span class="s1">)</span>
+        <span class="s1">)</span>
+
+    <span class="s0">if </span><span class="s1">hasattr(arg</span><span class="s0">, </span><span class="s3">&quot;component_event&quot;</span><span class="s1">):</span>
+        <span class="s0">raise </span><span class="s1">exceptions.NonExistentEventException(</span>
+            <span class="s3">&quot;&quot;&quot; 
+            Events have been removed. 
+            Use the associated property instead. 
+            &quot;&quot;&quot;</span>
+        <span class="s1">)</span>
+
+    <span class="s0">if </span><span class="s1">isinstance(arg.component_id</span><span class="s0">, </span><span class="s1">dict):</span>
+        <span class="s1">validate_id_dict(arg)</span>
+
+    <span class="s0">elif </span><span class="s1">isinstance(arg.component_id</span><span class="s0">, </span><span class="s1">str):</span>
+        <span class="s1">validate_id_string(arg)</span>
+
+    <span class="s0">else</span><span class="s1">:</span>
+        <span class="s0">raise </span><span class="s1">exceptions.IncorrectTypeException(</span>
+            <span class="s1">dedent(</span>
+                <span class="s3">f&quot;&quot;&quot;</span>
+                <span class="s3">component_id must be a string or dict, found </span><span class="s0">{</span><span class="s1">arg.component_id</span><span class="s0">!r}</span>
+                <span class="s3">&quot;&quot;&quot;</span>
+            <span class="s1">)</span>
+        <span class="s1">)</span>
+
+
+<span class="s0">def </span><span class="s1">validate_id_dict(arg):</span>
+    <span class="s1">arg_id = arg.component_id</span>
+
+    <span class="s0">for </span><span class="s1">k </span><span class="s0">in </span><span class="s1">arg_id:</span>
+        <span class="s4"># Need to keep key type validation on the Python side, since</span>
+        <span class="s4"># non-string keys will be converted to strings in json.dumps and may</span>
+        <span class="s4"># cause unwanted collisions</span>
+        <span class="s0">if not </span><span class="s1">isinstance(k</span><span class="s0">, </span><span class="s1">str):</span>
+            <span class="s0">raise </span><span class="s1">exceptions.IncorrectTypeException(</span>
+                <span class="s1">dedent(</span>
+                    <span class="s3">f&quot;&quot;&quot;</span>
+                    <span class="s3">Wildcard ID keys must be non-empty strings,</span>
+                    <span class="s3">found </span><span class="s0">{</span><span class="s1">k</span><span class="s0">!r} </span><span class="s3">in id </span><span class="s0">{</span><span class="s1">arg_id</span><span class="s0">!r}</span>
+                    <span class="s3">&quot;&quot;&quot;</span>
+                <span class="s1">)</span>
+            <span class="s1">)</span>
+
+
+<span class="s0">def </span><span class="s1">validate_id_string(arg):</span>
+    <span class="s1">arg_id = arg.component_id</span>
+
+    <span class="s1">invalid_chars = </span><span class="s3">&quot;.{&quot;</span>
+    <span class="s1">invalid_found = [x </span><span class="s0">for </span><span class="s1">x </span><span class="s0">in </span><span class="s1">invalid_chars </span><span class="s0">if </span><span class="s1">x </span><span class="s0">in </span><span class="s1">arg_id]</span>
+    <span class="s0">if </span><span class="s1">invalid_found:</span>
+        <span class="s0">raise </span><span class="s1">exceptions.InvalidComponentIdError(</span>
+            <span class="s3">f&quot;&quot;&quot;</span>
+            <span class="s3">The element `</span><span class="s0">{</span><span class="s1">arg_id</span><span class="s0">}</span><span class="s3">` contains `</span><span class="s0">{</span><span class="s3">&quot;`, `&quot;</span><span class="s1">.join(invalid_found)</span><span class="s0">}</span><span class="s3">` in its ID.</span>
+            <span class="s3">Characters `</span><span class="s0">{</span><span class="s3">&quot;`, `&quot;</span><span class="s1">.join(invalid_chars)</span><span class="s0">}</span><span class="s3">` are not allowed in IDs.</span>
+            <span class="s3">&quot;&quot;&quot;</span>
+        <span class="s1">)</span>
+
+
+<span class="s0">def </span><span class="s1">validate_output_spec(output</span><span class="s0">, </span><span class="s1">output_spec</span><span class="s0">, </span><span class="s1">Output):</span>
+    <span class="s5">&quot;&quot;&quot; 
+    This validation is for security and internal debugging, not for users, 
+    so the messages are not intended to be clear. 
+    `output` comes from the callback definition, `output_spec` from the request. 
+    &quot;&quot;&quot;</span>
+    <span class="s0">if not </span><span class="s1">isinstance(output</span><span class="s0">, </span><span class="s1">(list</span><span class="s0">, </span><span class="s1">tuple)):</span>
+        <span class="s1">output</span><span class="s0">, </span><span class="s1">output_spec = [output]</span><span class="s0">, </span><span class="s1">[output_spec]</span>
+    <span class="s0">elif </span><span class="s1">len(output) != len(output_spec):</span>
+        <span class="s0">raise </span><span class="s1">exceptions.CallbackException(</span><span class="s3">&quot;Wrong length output_spec&quot;</span><span class="s1">)</span>
+
+    <span class="s0">for </span><span class="s1">outi</span><span class="s0">, </span><span class="s1">speci </span><span class="s0">in </span><span class="s1">zip(output</span><span class="s0">, </span><span class="s1">output_spec):</span>
+        <span class="s1">speci_list = speci </span><span class="s0">if </span><span class="s1">isinstance(speci</span><span class="s0">, </span><span class="s1">(list</span><span class="s0">, </span><span class="s1">tuple)) </span><span class="s0">else </span><span class="s1">[speci]</span>
+        <span class="s0">for </span><span class="s1">specij </span><span class="s0">in </span><span class="s1">speci_list:</span>
+            <span class="s0">if </span><span class="s1">(</span>
+                <span class="s0">not </span><span class="s1">Output(specij[</span><span class="s3">&quot;id&quot;</span><span class="s1">]</span><span class="s0">, </span><span class="s1">clean_property_name(specij[</span><span class="s3">&quot;property&quot;</span><span class="s1">]))</span>
+                <span class="s1">== outi</span>
+            <span class="s1">):</span>
+                <span class="s0">raise </span><span class="s1">exceptions.CallbackException(</span>
+                    <span class="s3">&quot;Output does not match callback definition&quot;</span>
+                <span class="s1">)</span>
+
+
+<span class="s0">def </span><span class="s1">validate_and_group_input_args(flat_args</span><span class="s0">, </span><span class="s1">arg_index_grouping):</span>
+    <span class="s0">if </span><span class="s1">grouping_len(arg_index_grouping) != len(flat_args):</span>
+        <span class="s0">raise </span><span class="s1">exceptions.CallbackException(</span><span class="s3">&quot;Inputs do not match callback definition&quot;</span><span class="s1">)</span>
+
+    <span class="s1">args_grouping = map_grouping(</span><span class="s0">lambda </span><span class="s1">ind: flat_args[ind]</span><span class="s0">, </span><span class="s1">arg_index_grouping)</span>
+    <span class="s0">if </span><span class="s1">isinstance(arg_index_grouping</span><span class="s0">, </span><span class="s1">dict):</span>
+        <span class="s1">func_args = []</span>
+        <span class="s1">func_kwargs = args_grouping</span>
+        <span class="s0">for </span><span class="s1">key </span><span class="s0">in </span><span class="s1">func_kwargs:</span>
+            <span class="s0">if not </span><span class="s1">key.isidentifier():</span>
+                <span class="s0">raise </span><span class="s1">exceptions.CallbackException(</span>
+                    <span class="s3">f&quot;</span><span class="s0">{</span><span class="s1">key</span><span class="s0">} </span><span class="s3">is not a valid Python variable name&quot;</span>
+                <span class="s1">)</span>
+    <span class="s0">elif </span><span class="s1">isinstance(arg_index_grouping</span><span class="s0">, </span><span class="s1">(tuple</span><span class="s0">, </span><span class="s1">list)):</span>
+        <span class="s1">func_args = list(args_grouping)</span>
+        <span class="s1">func_kwargs = {}</span>
+    <span class="s0">else</span><span class="s1">:</span>
+        <span class="s4"># Scalar input</span>
+        <span class="s1">func_args = [args_grouping]</span>
+        <span class="s1">func_kwargs = {}</span>
+
+    <span class="s0">return </span><span class="s1">func_args</span><span class="s0">, </span><span class="s1">func_kwargs</span>
+
+
+<span class="s0">def </span><span class="s1">validate_multi_return(output_lists</span><span class="s0">, </span><span class="s1">output_values</span><span class="s0">, </span><span class="s1">callback_id):</span>
+    <span class="s0">if not </span><span class="s1">isinstance(output_values</span><span class="s0">, </span><span class="s1">(list</span><span class="s0">, </span><span class="s1">tuple)):</span>
+        <span class="s0">raise </span><span class="s1">exceptions.InvalidCallbackReturnValue(</span>
+            <span class="s1">dedent(</span>
+                <span class="s3">f&quot;&quot;&quot;</span>
+                <span class="s3">The callback </span><span class="s0">{</span><span class="s1">callback_id</span><span class="s0">} </span><span class="s3">is a multi-output.</span>
+                <span class="s3">Expected the output type to be a list or tuple but got:</span>
+                <span class="s0">{</span><span class="s1">output_values</span><span class="s0">!r}</span><span class="s3">.</span>
+                <span class="s3">&quot;&quot;&quot;</span>
+            <span class="s1">)</span>
+        <span class="s1">)</span>
+
+    <span class="s0">if </span><span class="s1">len(output_values) != len(output_lists):</span>
+        <span class="s0">raise </span><span class="s1">exceptions.InvalidCallbackReturnValue(</span>
+            <span class="s3">f&quot;&quot;&quot;</span>
+            <span class="s3">Invalid number of output values for </span><span class="s0">{</span><span class="s1">callback_id</span><span class="s0">}</span><span class="s3">.</span>
+            <span class="s3">Expected </span><span class="s0">{</span><span class="s1">len(output_lists)</span><span class="s0">}</span><span class="s3">, got </span><span class="s0">{</span><span class="s1">len(output_values)</span><span class="s0">}</span>
+            <span class="s3">&quot;&quot;&quot;</span>
+        <span class="s1">)</span>
+
+    <span class="s0">for </span><span class="s1">i</span><span class="s0">, </span><span class="s1">output_spec </span><span class="s0">in </span><span class="s1">enumerate(output_lists):</span>
+        <span class="s0">if </span><span class="s1">isinstance(output_spec</span><span class="s0">, </span><span class="s1">list):</span>
+            <span class="s1">output_value = output_values[i]</span>
+            <span class="s0">if not </span><span class="s1">isinstance(output_value</span><span class="s0">, </span><span class="s1">(list</span><span class="s0">, </span><span class="s1">tuple)):</span>
+                <span class="s0">raise </span><span class="s1">exceptions.InvalidCallbackReturnValue(</span>
+                    <span class="s1">dedent(</span>
+                        <span class="s3">f&quot;&quot;&quot;</span>
+                        <span class="s3">The callback </span><span class="s0">{</span><span class="s1">callback_id</span><span class="s0">} </span><span class="s3">output </span><span class="s0">{</span><span class="s1">i</span><span class="s0">} </span><span class="s3">is a wildcard multi-output.</span>
+                        <span class="s3">Expected the output type to be a list or tuple but got:</span>
+                        <span class="s0">{</span><span class="s1">output_value</span><span class="s0">!r}</span><span class="s3">.</span>
+                        <span class="s3">output spec: </span><span class="s0">{</span><span class="s1">output_spec</span><span class="s0">!r}</span>
+                        <span class="s3">&quot;&quot;&quot;</span>
+                    <span class="s1">)</span>
+                <span class="s1">)</span>
+
+            <span class="s0">if </span><span class="s1">len(output_value) != len(output_spec):</span>
+                <span class="s0">raise </span><span class="s1">exceptions.InvalidCallbackReturnValue(</span>
+                    <span class="s1">dedent(</span>
+                        <span class="s3">f&quot;&quot;&quot;</span>
+                        <span class="s3">Invalid number of output values for </span><span class="s0">{</span><span class="s1">callback_id</span><span class="s0">} </span><span class="s3">item </span><span class="s0">{</span><span class="s1">i</span><span class="s0">}</span><span class="s3">.</span>
+                        <span class="s3">Expected </span><span class="s0">{</span><span class="s1">len(output_spec)</span><span class="s0">}</span><span class="s3">, got </span><span class="s0">{</span><span class="s1">len(output_value)</span><span class="s0">}</span>
+                        <span class="s3">output spec: </span><span class="s0">{</span><span class="s1">output_spec</span><span class="s0">!r}</span>
+                        <span class="s3">output value: </span><span class="s0">{</span><span class="s1">output_value</span><span class="s0">!r}</span>
+                        <span class="s3">&quot;&quot;&quot;</span>
+                    <span class="s1">)</span>
+                <span class="s1">)</span>
+
+
+<span class="s0">def </span><span class="s1">fail_callback_output(output_value</span><span class="s0">, </span><span class="s1">output):</span>
+    <span class="s1">valid_children = (str</span><span class="s0">, </span><span class="s1">int</span><span class="s0">, </span><span class="s1">float</span><span class="s0">, </span><span class="s1">type(</span><span class="s0">None</span><span class="s1">)</span><span class="s0">, </span><span class="s1">Component)</span>
+    <span class="s1">valid_props = (str</span><span class="s0">, </span><span class="s1">int</span><span class="s0">, </span><span class="s1">float</span><span class="s0">, </span><span class="s1">type(</span><span class="s0">None</span><span class="s1">)</span><span class="s0">, </span><span class="s1">tuple</span><span class="s0">, </span><span class="s1">MutableSequence)</span>
+
+    <span class="s0">def </span><span class="s1">_raise_invalid(bad_val</span><span class="s0">, </span><span class="s1">outer_val</span><span class="s0">, </span><span class="s1">path</span><span class="s0">, </span><span class="s1">index=</span><span class="s0">None, </span><span class="s1">toplevel=</span><span class="s0">False</span><span class="s1">):</span>
+        <span class="s1">bad_type = type(bad_val).__name__</span>
+        <span class="s1">outer_id = </span><span class="s3">f&quot;(id=</span><span class="s0">{</span><span class="s1">outer_val.id</span><span class="s0">:</span><span class="s3">s</span><span class="s0">}</span><span class="s3">)&quot; </span><span class="s0">if </span><span class="s1">getattr(outer_val</span><span class="s0">, </span><span class="s3">&quot;id&quot;</span><span class="s0">, False</span><span class="s1">) </span><span class="s0">else </span><span class="s3">&quot;&quot;</span>
+        <span class="s1">outer_type = type(outer_val).__name__</span>
+        <span class="s0">if </span><span class="s1">toplevel:</span>
+            <span class="s1">location = dedent(</span>
+                <span class="s3">&quot;&quot;&quot; 
+                The value in question is either the only value returned, 
+                or is in the top level of the returned list, 
+                &quot;&quot;&quot;</span>
+            <span class="s1">)</span>
+        <span class="s0">else</span><span class="s1">:</span>
+            <span class="s1">index_string = </span><span class="s3">&quot;[*]&quot; </span><span class="s0">if </span><span class="s1">index </span><span class="s0">is None else </span><span class="s3">f&quot;[</span><span class="s0">{</span><span class="s1">index</span><span class="s0">:</span><span class="s3">d</span><span class="s0">}</span><span class="s3">]&quot;</span>
+            <span class="s1">location = dedent(</span>
+                <span class="s3">f&quot;&quot;&quot;</span>
+                <span class="s3">The value in question is located at</span>
+                <span class="s0">{</span><span class="s1">index_string</span><span class="s0">} {</span><span class="s1">outer_type</span><span class="s0">} {</span><span class="s1">outer_id</span><span class="s0">}</span>
+                <span class="s0">{</span><span class="s1">path</span><span class="s0">}</span><span class="s3">,</span>
+                <span class="s3">&quot;&quot;&quot;</span>
+            <span class="s1">)</span>
+
+        <span class="s1">obj = </span><span class="s3">&quot;tree with one value&quot; </span><span class="s0">if not </span><span class="s1">toplevel </span><span class="s0">else </span><span class="s3">&quot;value&quot;</span>
+        <span class="s0">raise </span><span class="s1">exceptions.InvalidCallbackReturnValue(</span>
+            <span class="s1">dedent(</span>
+                <span class="s3">f&quot;&quot;&quot;</span>
+                <span class="s3">The callback for `</span><span class="s0">{</span><span class="s1">output</span><span class="s0">!r}</span><span class="s3">`</span>
+                <span class="s3">returned a </span><span class="s0">{</span><span class="s1">obj</span><span class="s0">:</span><span class="s3">s</span><span class="s0">} </span><span class="s3">having type `</span><span class="s0">{</span><span class="s1">bad_type</span><span class="s0">}</span><span class="s3">`</span>
+                <span class="s3">which is not JSON serializable.</span>
+
+                <span class="s0">{</span><span class="s1">location</span><span class="s0">}</span>
+                <span class="s3">and has string representation</span>
+                <span class="s3">`</span><span class="s0">{</span><span class="s1">bad_val</span><span class="s0">}</span><span class="s3">`</span>
+
+                <span class="s3">In general, Dash properties can only be</span>
+                <span class="s3">dash components, strings, dictionaries, numbers, None,</span>
+                <span class="s3">or lists of those.</span>
+                <span class="s3">&quot;&quot;&quot;</span>
+            <span class="s1">)</span>
+        <span class="s1">)</span>
+
+    <span class="s0">def </span><span class="s1">_valid_child(val):</span>
+        <span class="s0">return </span><span class="s1">isinstance(val</span><span class="s0">, </span><span class="s1">valid_children)</span>
+
+    <span class="s0">def </span><span class="s1">_valid_prop(val):</span>
+        <span class="s0">return </span><span class="s1">isinstance(val</span><span class="s0">, </span><span class="s1">valid_props)</span>
+
+    <span class="s0">def </span><span class="s1">_can_serialize(val):</span>
+        <span class="s0">if not </span><span class="s1">(_valid_child(val) </span><span class="s0">or </span><span class="s1">_valid_prop(val)):</span>
+            <span class="s0">return False</span>
+        <span class="s0">try</span><span class="s1">:</span>
+            <span class="s1">to_json(val)</span>
+        <span class="s0">except </span><span class="s1">TypeError:</span>
+            <span class="s0">return False</span>
+        <span class="s0">return True</span>
+
+    <span class="s0">def </span><span class="s1">_validate_value(val</span><span class="s0">, </span><span class="s1">index=</span><span class="s0">None</span><span class="s1">):</span>
+        <span class="s4"># val is a Component</span>
+        <span class="s0">if </span><span class="s1">isinstance(val</span><span class="s0">, </span><span class="s1">Component):</span>
+            <span class="s1">unserializable_items = []</span>
+            <span class="s4"># pylint: disable=protected-access</span>
+            <span class="s0">for </span><span class="s1">p</span><span class="s0">, </span><span class="s1">j </span><span class="s0">in </span><span class="s1">val._traverse_with_paths():</span>
+                <span class="s4"># check each component value in the tree</span>
+                <span class="s0">if not </span><span class="s1">_valid_child(j):</span>
+                    <span class="s1">_raise_invalid(bad_val=j</span><span class="s0">, </span><span class="s1">outer_val=val</span><span class="s0">, </span><span class="s1">path=p</span><span class="s0">, </span><span class="s1">index=index)</span>
+
+                <span class="s0">if not </span><span class="s1">_can_serialize(j):</span>
+                    <span class="s4"># collect unserializable items separately, so we can report</span>
+                    <span class="s4"># only the deepest level, not all the parent components that</span>
+                    <span class="s4"># are just unserializable because of their children.</span>
+                    <span class="s1">unserializable_items = [</span>
+                        <span class="s1">i </span><span class="s0">for </span><span class="s1">i </span><span class="s0">in </span><span class="s1">unserializable_items </span><span class="s0">if not </span><span class="s1">p.startswith(i[</span><span class="s2">0</span><span class="s1">])</span>
+                    <span class="s1">]</span>
+                    <span class="s0">if </span><span class="s1">unserializable_items:</span>
+                        <span class="s4"># we already have something unserializable in a different</span>
+                        <span class="s4"># branch - time to stop and fail</span>
+                        <span class="s0">break</span>
+                    <span class="s0">if </span><span class="s1">all(</span><span class="s0">not </span><span class="s1">i[</span><span class="s2">0</span><span class="s1">].startswith(p) </span><span class="s0">for </span><span class="s1">i </span><span class="s0">in </span><span class="s1">unserializable_items):</span>
+                        <span class="s1">unserializable_items.append((p</span><span class="s0">, </span><span class="s1">j))</span>
+
+                <span class="s4"># Children that are not of type Component or</span>
+                <span class="s4"># list/tuple not returned by traverse</span>
+                <span class="s1">child = getattr(j</span><span class="s0">, </span><span class="s3">&quot;children&quot;</span><span class="s0">, None</span><span class="s1">)</span>
+                <span class="s0">if not </span><span class="s1">isinstance(child</span><span class="s0">, </span><span class="s1">(tuple</span><span class="s0">, </span><span class="s1">MutableSequence)):</span>
+                    <span class="s0">if </span><span class="s1">child </span><span class="s0">and not </span><span class="s1">_can_serialize(child):</span>
+                        <span class="s1">_raise_invalid(</span>
+                            <span class="s1">bad_val=child</span><span class="s0">,</span>
+                            <span class="s1">outer_val=val</span><span class="s0">,</span>
+                            <span class="s1">path=p + </span><span class="s3">&quot;</span><span class="s0">\n</span><span class="s3">&quot; </span><span class="s1">+ </span><span class="s3">&quot;[*] &quot; </span><span class="s1">+ type(child).__name__</span><span class="s0">,</span>
+                            <span class="s1">index=index</span><span class="s0">,</span>
+                        <span class="s1">)</span>
+            <span class="s0">if </span><span class="s1">unserializable_items:</span>
+                <span class="s1">p</span><span class="s0">, </span><span class="s1">j = unserializable_items[</span><span class="s2">0</span><span class="s1">]</span>
+                <span class="s4"># just report the first one, even if there are multiple,</span>
+                <span class="s4"># as that's how all the other errors work</span>
+                <span class="s1">_raise_invalid(bad_val=j</span><span class="s0">, </span><span class="s1">outer_val=val</span><span class="s0">, </span><span class="s1">path=p</span><span class="s0">, </span><span class="s1">index=index)</span>
+
+            <span class="s4"># Also check the child of val, as it will not be returned</span>
+            <span class="s1">child = getattr(val</span><span class="s0">, </span><span class="s3">&quot;children&quot;</span><span class="s0">, None</span><span class="s1">)</span>
+            <span class="s0">if not </span><span class="s1">isinstance(child</span><span class="s0">, </span><span class="s1">(tuple</span><span class="s0">, </span><span class="s1">MutableSequence)):</span>
+                <span class="s0">if </span><span class="s1">child </span><span class="s0">and not </span><span class="s1">_can_serialize(val):</span>
+                    <span class="s1">_raise_invalid(</span>
+                        <span class="s1">bad_val=child</span><span class="s0">,</span>
+                        <span class="s1">outer_val=val</span><span class="s0">,</span>
+                        <span class="s1">path=type(child).__name__</span><span class="s0">,</span>
+                        <span class="s1">index=index</span><span class="s0">,</span>
+                    <span class="s1">)</span>
+
+        <span class="s0">if not </span><span class="s1">_can_serialize(val):</span>
+            <span class="s1">_raise_invalid(</span>
+                <span class="s1">bad_val=val</span><span class="s0">,</span>
+                <span class="s1">outer_val=type(val).__name__</span><span class="s0">,</span>
+                <span class="s1">path=</span><span class="s3">&quot;&quot;</span><span class="s0">,</span>
+                <span class="s1">index=index</span><span class="s0">,</span>
+                <span class="s1">toplevel=</span><span class="s0">True,</span>
+            <span class="s1">)</span>
+
+    <span class="s0">if </span><span class="s1">isinstance(output_value</span><span class="s0">, </span><span class="s1">list):</span>
+        <span class="s0">for </span><span class="s1">i</span><span class="s0">, </span><span class="s1">val </span><span class="s0">in </span><span class="s1">enumerate(output_value):</span>
+            <span class="s1">_validate_value(val</span><span class="s0">, </span><span class="s1">index=i)</span>
+    <span class="s0">else</span><span class="s1">:</span>
+        <span class="s1">_validate_value(output_value)</span>
+
+    <span class="s4"># if we got this far, raise a generic JSON error</span>
+    <span class="s0">raise </span><span class="s1">exceptions.InvalidCallbackReturnValue(</span>
+        <span class="s3">f&quot;&quot;&quot;</span>
+        <span class="s3">The callback for output `</span><span class="s0">{</span><span class="s1">output</span><span class="s0">!r}</span><span class="s3">`</span>
+        <span class="s3">returned a value which is not JSON serializable.</span>
+
+        <span class="s3">In general, Dash properties can only be dash components, strings,</span>
+        <span class="s3">dictionaries, numbers, None, or lists of those.</span>
+        <span class="s3">&quot;&quot;&quot;</span>
+    <span class="s1">)</span>
+
+
+<span class="s0">def </span><span class="s1">check_obsolete(kwargs):</span>
+    <span class="s0">for </span><span class="s1">key </span><span class="s0">in </span><span class="s1">kwargs:</span>
+        <span class="s0">if </span><span class="s1">key </span><span class="s0">in </span><span class="s1">[</span><span class="s3">&quot;components_cache_max_age&quot;</span><span class="s0">, </span><span class="s3">&quot;static_folder&quot;</span><span class="s1">]:</span>
+            <span class="s0">raise </span><span class="s1">exceptions.ObsoleteKwargException(</span>
+                <span class="s3">f&quot;&quot;&quot;</span>
+                <span class="s0">{</span><span class="s1">key</span><span class="s0">} </span><span class="s3">is no longer a valid keyword argument in Dash since v1.0.</span>
+                <span class="s3">See https://dash.plotly.com for details.</span>
+                <span class="s3">&quot;&quot;&quot;</span>
+            <span class="s1">)</span>
+        <span class="s4"># any other kwarg mimic the built-in exception</span>
+        <span class="s0">raise </span><span class="s1">TypeError(</span><span class="s3">f&quot;Dash() got an unexpected keyword argument '</span><span class="s0">{</span><span class="s1">key</span><span class="s0">}</span><span class="s3">'&quot;</span><span class="s1">)</span>
+
+
+<span class="s0">def </span><span class="s1">validate_js_path(registered_paths</span><span class="s0">, </span><span class="s1">package_name</span><span class="s0">, </span><span class="s1">path_in_package_dist):</span>
+    <span class="s0">if </span><span class="s1">package_name </span><span class="s0">not in </span><span class="s1">registered_paths:</span>
+        <span class="s0">raise </span><span class="s1">exceptions.DependencyException(</span>
+            <span class="s3">f&quot;&quot;&quot;</span>
+            <span class="s3">Error loading dependency. &quot;</span><span class="s0">{</span><span class="s1">package_name</span><span class="s0">}</span><span class="s3">&quot; is not a registered library.</span>
+            <span class="s3">Registered libraries are:</span>
+            <span class="s0">{</span><span class="s1">list(registered_paths.keys())</span><span class="s0">}</span>
+            <span class="s3">&quot;&quot;&quot;</span>
+        <span class="s1">)</span>
+
+    <span class="s0">if </span><span class="s1">path_in_package_dist </span><span class="s0">not in </span><span class="s1">registered_paths[package_name]:</span>
+        <span class="s0">raise </span><span class="s1">exceptions.DependencyException(</span>
+            <span class="s3">f&quot;&quot;&quot;</span>
+            <span class="s3">&quot;</span><span class="s0">{</span><span class="s1">package_name</span><span class="s0">}</span><span class="s3">&quot; is registered but the path requested is not valid.</span>
+            <span class="s3">The path requested: &quot;</span><span class="s0">{</span><span class="s1">path_in_package_dist</span><span class="s0">}</span><span class="s3">&quot;</span>
+            <span class="s3">List of registered paths: </span><span class="s0">{</span><span class="s1">registered_paths</span><span class="s0">}</span>
+            <span class="s3">&quot;&quot;&quot;</span>
+        <span class="s1">)</span>
+
+
+<span class="s0">def </span><span class="s1">validate_index(name</span><span class="s0">, </span><span class="s1">checks</span><span class="s0">, </span><span class="s1">index):</span>
+    <span class="s1">missing = [i </span><span class="s0">for </span><span class="s1">check</span><span class="s0">, </span><span class="s1">i </span><span class="s0">in </span><span class="s1">checks </span><span class="s0">if not </span><span class="s1">re.compile(check).search(index)]</span>
+    <span class="s0">if </span><span class="s1">missing:</span>
+        <span class="s1">plural = </span><span class="s3">&quot;s&quot; </span><span class="s0">if </span><span class="s1">len(missing) &gt; </span><span class="s2">1 </span><span class="s0">else </span><span class="s3">&quot;&quot;</span>
+        <span class="s0">raise </span><span class="s1">exceptions.InvalidIndexException(</span>
+            <span class="s3">f&quot;Missing item</span><span class="s0">{</span><span class="s1">plural</span><span class="s0">} {</span><span class="s3">', '</span><span class="s1">.join(missing)</span><span class="s0">} </span><span class="s3">in </span><span class="s0">{</span><span class="s1">name</span><span class="s0">}</span><span class="s3">.&quot;</span>
+        <span class="s1">)</span>
+
+
+<span class="s0">def </span><span class="s1">validate_layout_type(value):</span>
+    <span class="s0">if not </span><span class="s1">isinstance(value</span><span class="s0">, </span><span class="s1">(Component</span><span class="s0">, </span><span class="s1">patch_collections_abc(</span><span class="s3">&quot;Callable&quot;</span><span class="s1">))):</span>
+        <span class="s0">raise </span><span class="s1">exceptions.NoLayoutException(</span>
+            <span class="s3">&quot;Layout must be a dash component &quot;</span>
+            <span class="s3">&quot;or a function that returns a dash component.&quot;</span>
+        <span class="s1">)</span>
+
+
+<span class="s0">def </span><span class="s1">validate_layout(layout</span><span class="s0">, </span><span class="s1">layout_value):</span>
+    <span class="s0">if </span><span class="s1">layout </span><span class="s0">is None</span><span class="s1">:</span>
+        <span class="s0">raise </span><span class="s1">exceptions.NoLayoutException(</span>
+            <span class="s3">&quot;&quot;&quot; 
+            The layout was `None` at the time that `run_server` was called. 
+            Make sure to set the `layout` attribute of your application 
+            before running the server. 
+            &quot;&quot;&quot;</span>
+        <span class="s1">)</span>
+
+    <span class="s1">layout_id = stringify_id(getattr(layout_value</span><span class="s0">, </span><span class="s3">&quot;id&quot;</span><span class="s0">, None</span><span class="s1">))</span>
+
+    <span class="s1">component_ids = {layout_id} </span><span class="s0">if </span><span class="s1">layout_id </span><span class="s0">else </span><span class="s1">set()</span>
+    <span class="s0">for </span><span class="s1">component </span><span class="s0">in </span><span class="s1">layout_value._traverse():  </span><span class="s4"># pylint: disable=protected-access</span>
+        <span class="s1">component_id = stringify_id(getattr(component</span><span class="s0">, </span><span class="s3">&quot;id&quot;</span><span class="s0">, None</span><span class="s1">))</span>
+        <span class="s0">if </span><span class="s1">component_id </span><span class="s0">and </span><span class="s1">component_id </span><span class="s0">in </span><span class="s1">component_ids:</span>
+            <span class="s0">raise </span><span class="s1">exceptions.DuplicateIdError(</span>
+                <span class="s3">f&quot;&quot;&quot;</span>
+                <span class="s3">Duplicate component id found in the initial layout: `</span><span class="s0">{</span><span class="s1">component_id</span><span class="s0">}</span><span class="s3">`</span>
+                <span class="s3">&quot;&quot;&quot;</span>
+            <span class="s1">)</span>
+        <span class="s1">component_ids.add(component_id)</span>
+
+
+<span class="s0">def </span><span class="s1">validate_template(template):</span>
+    <span class="s1">variable_names = re.findall(</span><span class="s3">&quot;&lt;(.*?)&gt;&quot;</span><span class="s0">, </span><span class="s1">template)</span>
+
+    <span class="s0">for </span><span class="s1">name </span><span class="s0">in </span><span class="s1">variable_names:</span>
+        <span class="s0">if not </span><span class="s1">name.isidentifier() </span><span class="s0">or </span><span class="s1">iskeyword(name):</span>
+            <span class="s0">raise </span><span class="s1">Exception(</span>
+                <span class="s3">f'`</span><span class="s0">{</span><span class="s1">name</span><span class="s0">}</span><span class="s3">` is not a valid Python variable name in `path_template`: &quot;</span><span class="s0">{</span><span class="s1">template</span><span class="s0">}</span><span class="s3">&quot;.'</span>
+            <span class="s1">)</span>
+
+
+<span class="s0">def </span><span class="s1">check_for_duplicate_pathnames(registry):</span>
+    <span class="s1">path_to_module = {}</span>
+    <span class="s0">for </span><span class="s1">page </span><span class="s0">in </span><span class="s1">registry.values():</span>
+        <span class="s0">if </span><span class="s1">page[</span><span class="s3">&quot;path&quot;</span><span class="s1">] </span><span class="s0">not in </span><span class="s1">path_to_module:</span>
+            <span class="s1">path_to_module[page[</span><span class="s3">&quot;path&quot;</span><span class="s1">]] = [page[</span><span class="s3">&quot;module&quot;</span><span class="s1">]]</span>
+        <span class="s0">else</span><span class="s1">:</span>
+            <span class="s1">path_to_module[page[</span><span class="s3">&quot;path&quot;</span><span class="s1">]].append(page[</span><span class="s3">&quot;module&quot;</span><span class="s1">])</span>
+
+    <span class="s0">for </span><span class="s1">modules </span><span class="s0">in </span><span class="s1">path_to_module.values():</span>
+        <span class="s0">if </span><span class="s1">len(modules) &gt; </span><span class="s2">1</span><span class="s1">:</span>
+            <span class="s0">raise </span><span class="s1">Exception(</span><span class="s3">f&quot;modules </span><span class="s0">{</span><span class="s1">modules</span><span class="s0">} </span><span class="s3">have duplicate paths&quot;</span><span class="s1">)</span>
+
+
+<span class="s0">def </span><span class="s1">validate_registry(registry):</span>
+    <span class="s0">for </span><span class="s1">page </span><span class="s0">in </span><span class="s1">registry.values():</span>
+        <span class="s0">if </span><span class="s3">&quot;layout&quot; </span><span class="s0">not in </span><span class="s1">page:</span>
+            <span class="s0">raise </span><span class="s1">exceptions.NoLayoutException(</span>
+                <span class="s3">f&quot;No layout in module `</span><span class="s0">{</span><span class="s1">page[</span><span class="s3">'module'</span><span class="s1">]</span><span class="s0">}</span><span class="s3">` in dash.page_registry&quot;</span>
+            <span class="s1">)</span>
+        <span class="s0">if </span><span class="s1">page[</span><span class="s3">&quot;module&quot;</span><span class="s1">] == </span><span class="s3">&quot;__main__&quot;</span><span class="s1">:</span>
+            <span class="s0">raise </span><span class="s1">Exception(</span>
+                <span class="s3">&quot;&quot;&quot; 
+                When registering pages from app.py, `__name__` is not a valid module name.  Use a string instead. 
+                For example, `dash.register_page(&quot;my_module_name&quot;)`, rather than `dash.register_page(__name__)` 
+                &quot;&quot;&quot;</span>
+            <span class="s1">)</span>
+
+
+<span class="s0">def </span><span class="s1">validate_pages_layout(module</span><span class="s0">, </span><span class="s1">page):</span>
+    <span class="s0">if not </span><span class="s1">hasattr(page</span><span class="s0">, </span><span class="s3">&quot;layout&quot;</span><span class="s1">):</span>
+        <span class="s0">raise </span><span class="s1">exceptions.NoLayoutException(</span>
+            <span class="s3">f&quot;&quot;&quot;</span>
+            <span class="s3">No layout found in module </span><span class="s0">{</span><span class="s1">module</span><span class="s0">}</span>
+            <span class="s3">A variable or a function named &quot;layout&quot; is required.</span>
+            <span class="s3">&quot;&quot;&quot;</span>
+        <span class="s1">)</span>
+
+
+<span class="s0">def </span><span class="s1">validate_use_pages(config):</span>
+    <span class="s0">if not </span><span class="s1">config.get(</span><span class="s3">&quot;assets_folder&quot;</span><span class="s0">, None</span><span class="s1">):</span>
+        <span class="s0">raise </span><span class="s1">exceptions.PageError(</span>
+            <span class="s3">&quot;`dash.register_page()` must be called after app instantiation&quot;</span>
+        <span class="s1">)</span>
+
+    <span class="s0">if </span><span class="s1">flask.has_request_context():</span>
+        <span class="s0">raise </span><span class="s1">exceptions.PageError(</span>
+            <span class="s3">&quot;&quot;&quot; 
+            dash.register_page() can’t be called within a callback as it updates dash.page_registry, which is a global variable. 
+             For more details, see https://dash.plotly.com/sharing-data-between-callbacks#why-global-variables-will-break-your-app 
+            &quot;&quot;&quot;</span>
+        <span class="s1">)</span>
+
+
+<span class="s0">def </span><span class="s1">validate_module_name(module):</span>
+    <span class="s0">if not </span><span class="s1">isinstance(module</span><span class="s0">, </span><span class="s1">str):</span>
+        <span class="s0">raise </span><span class="s1">exceptions.PageError(</span>
+            <span class="s3">&quot;The first attribute of dash.register_page() must be a string or '__name__'&quot;</span>
+        <span class="s1">)</span>
+    <span class="s0">return </span><span class="s1">module</span>
+
+
+<span class="s0">def </span><span class="s1">validate_long_callbacks(callback_map):</span>
+    <span class="s4"># Validate that long callback side output &amp; inputs are not circular</span>
+    <span class="s4"># If circular, triggering a long callback would result in a fatal server/computer crash.</span>
+    <span class="s1">all_outputs = set()</span>
+    <span class="s1">input_indexed = {}</span>
+    <span class="s0">for </span><span class="s1">callback </span><span class="s0">in </span><span class="s1">callback_map.values():</span>
+        <span class="s1">out = coerce_to_list(callback[</span><span class="s3">&quot;output&quot;</span><span class="s1">])</span>
+        <span class="s1">all_outputs.update(out)</span>
+        <span class="s0">for </span><span class="s1">o </span><span class="s0">in </span><span class="s1">out:</span>
+            <span class="s1">input_indexed.setdefault(o</span><span class="s0">, </span><span class="s1">set())</span>
+            <span class="s1">input_indexed[o].update(coerce_to_list(callback[</span><span class="s3">&quot;raw_inputs&quot;</span><span class="s1">]))</span>
+
+    <span class="s0">for </span><span class="s1">callback </span><span class="s0">in </span><span class="s1">(x </span><span class="s0">for </span><span class="s1">x </span><span class="s0">in </span><span class="s1">callback_map.values() </span><span class="s0">if </span><span class="s1">x.get(</span><span class="s3">&quot;long&quot;</span><span class="s1">)):</span>
+        <span class="s1">long_info = callback[</span><span class="s3">&quot;long&quot;</span><span class="s1">]</span>
+        <span class="s1">progress = long_info.get(</span><span class="s3">&quot;progress&quot;</span><span class="s0">, </span><span class="s1">[])</span>
+        <span class="s1">running = long_info.get(</span><span class="s3">&quot;running&quot;</span><span class="s0">, </span><span class="s1">[])</span>
+
+        <span class="s1">long_inputs = coerce_to_list(callback[</span><span class="s3">&quot;raw_inputs&quot;</span><span class="s1">])</span>
+        <span class="s1">outputs = set([x[</span><span class="s2">0</span><span class="s1">] </span><span class="s0">for </span><span class="s1">x </span><span class="s0">in </span><span class="s1">running] + progress)</span>
+        <span class="s1">circular = [</span>
+            <span class="s1">x</span>
+            <span class="s0">for </span><span class="s1">x </span><span class="s0">in </span><span class="s1">set(k </span><span class="s0">for </span><span class="s1">k</span><span class="s0">, </span><span class="s1">v </span><span class="s0">in </span><span class="s1">input_indexed.items() </span><span class="s0">if </span><span class="s1">v.intersection(outputs))</span>
+            <span class="s0">if </span><span class="s1">x </span><span class="s0">in </span><span class="s1">long_inputs</span>
+        <span class="s1">]</span>
+
+        <span class="s0">if </span><span class="s1">circular:</span>
+            <span class="s0">raise </span><span class="s1">exceptions.LongCallbackError(</span>
+                <span class="s3">f&quot;Long callback circular error!</span><span class="s0">\n{</span><span class="s1">circular</span><span class="s0">} </span><span class="s3">is used as input for a long callback&quot;</span>
+                <span class="s3">f&quot; but also used as output from an input that is updated with progress or running argument.&quot;</span>
+            <span class="s1">)</span>
+
+
+<span class="s0">def </span><span class="s1">validate_duplicate_output(</span>
+    <span class="s1">output</span><span class="s0">, </span><span class="s1">prevent_initial_call</span><span class="s0">, </span><span class="s1">config_prevent_initial_call</span>
+<span class="s1">):</span>
+    <span class="s0">if </span><span class="s3">&quot;initial_duplicate&quot; </span><span class="s0">in </span><span class="s1">(prevent_initial_call</span><span class="s0">, </span><span class="s1">config_prevent_initial_call):</span>
+        <span class="s0">return</span>
+
+    <span class="s0">def </span><span class="s1">_valid(out):</span>
+        <span class="s0">if </span><span class="s1">(</span>
+            <span class="s1">out.allow_duplicate</span>
+            <span class="s0">and not </span><span class="s1">prevent_initial_call</span>
+            <span class="s0">and not </span><span class="s1">config_prevent_initial_call</span>
+        <span class="s1">):</span>
+            <span class="s0">raise </span><span class="s1">exceptions.DuplicateCallback(</span>
+                <span class="s3">&quot;allow_duplicate requires prevent_initial_call to be True. The order of the call is not&quot;</span>
+                <span class="s3">&quot; guaranteed to be the same on every page load. &quot;</span>
+                <span class="s3">&quot;To enable duplicate callback with initial call, set prevent_initial_call='initial_duplicate' &quot;</span>
+                <span class="s3">&quot; or globally in the config prevent_initial_callbacks='initial_duplicate'&quot;</span>
+            <span class="s1">)</span>
+
+    <span class="s0">if </span><span class="s1">isinstance(output</span><span class="s0">, </span><span class="s1">(list</span><span class="s0">, </span><span class="s1">tuple)):</span>
+        <span class="s0">for </span><span class="s1">o </span><span class="s0">in </span><span class="s1">output:</span>
+            <span class="s1">_valid(o)</span>
+
+        <span class="s0">return</span>
+
+    <span class="s1">_valid(output)</span>
+</pre>
+</body>
+</html>

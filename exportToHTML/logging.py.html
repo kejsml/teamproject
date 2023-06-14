@@ -1,0 +1,370 @@
+<html>
+<head>
+<title>logging.py</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #cc7832;}
+.s1 { color: #a9b7c6;}
+.s2 { color: #6a8759;}
+.s3 { color: #629755; font-style: italic;}
+.s4 { color: #808080;}
+.s5 { color: #6897bb;}
+</style>
+</head>
+<body bgcolor="#1e1f22">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+logging.py</font>
+</center></td></tr></table>
+<pre><span class="s0">import </span><span class="s1">contextlib</span>
+<span class="s0">import </span><span class="s1">errno</span>
+<span class="s0">import </span><span class="s1">logging</span>
+<span class="s0">import </span><span class="s1">logging.handlers</span>
+<span class="s0">import </span><span class="s1">os</span>
+<span class="s0">import </span><span class="s1">sys</span>
+<span class="s0">import </span><span class="s1">threading</span>
+<span class="s0">from </span><span class="s1">dataclasses </span><span class="s0">import </span><span class="s1">dataclass</span>
+<span class="s0">from </span><span class="s1">io </span><span class="s0">import </span><span class="s1">TextIOWrapper</span>
+<span class="s0">from </span><span class="s1">logging </span><span class="s0">import </span><span class="s1">Filter</span>
+<span class="s0">from </span><span class="s1">typing </span><span class="s0">import </span><span class="s1">Any</span><span class="s0">, </span><span class="s1">ClassVar</span><span class="s0">, </span><span class="s1">Generator</span><span class="s0">, </span><span class="s1">List</span><span class="s0">, </span><span class="s1">Optional</span><span class="s0">, </span><span class="s1">TextIO</span><span class="s0">, </span><span class="s1">Type</span>
+
+<span class="s0">from </span><span class="s1">pip._vendor.rich.console </span><span class="s0">import </span><span class="s1">(</span>
+    <span class="s1">Console</span><span class="s0">,</span>
+    <span class="s1">ConsoleOptions</span><span class="s0">,</span>
+    <span class="s1">ConsoleRenderable</span><span class="s0">,</span>
+    <span class="s1">RenderableType</span><span class="s0">,</span>
+    <span class="s1">RenderResult</span><span class="s0">,</span>
+    <span class="s1">RichCast</span><span class="s0">,</span>
+<span class="s1">)</span>
+<span class="s0">from </span><span class="s1">pip._vendor.rich.highlighter </span><span class="s0">import </span><span class="s1">NullHighlighter</span>
+<span class="s0">from </span><span class="s1">pip._vendor.rich.logging </span><span class="s0">import </span><span class="s1">RichHandler</span>
+<span class="s0">from </span><span class="s1">pip._vendor.rich.segment </span><span class="s0">import </span><span class="s1">Segment</span>
+<span class="s0">from </span><span class="s1">pip._vendor.rich.style </span><span class="s0">import </span><span class="s1">Style</span>
+
+<span class="s0">from </span><span class="s1">pip._internal.utils._log </span><span class="s0">import </span><span class="s1">VERBOSE</span><span class="s0">, </span><span class="s1">getLogger</span>
+<span class="s0">from </span><span class="s1">pip._internal.utils.compat </span><span class="s0">import </span><span class="s1">WINDOWS</span>
+<span class="s0">from </span><span class="s1">pip._internal.utils.deprecation </span><span class="s0">import </span><span class="s1">DEPRECATION_MSG_PREFIX</span>
+<span class="s0">from </span><span class="s1">pip._internal.utils.misc </span><span class="s0">import </span><span class="s1">ensure_dir</span>
+
+<span class="s1">_log_state = threading.local()</span>
+<span class="s1">subprocess_logger = getLogger(</span><span class="s2">&quot;pip.subprocessor&quot;</span><span class="s1">)</span>
+
+
+<span class="s0">class </span><span class="s1">BrokenStdoutLoggingError(Exception):</span>
+    <span class="s3">&quot;&quot;&quot; 
+    Raised if BrokenPipeError occurs for the stdout stream while logging. 
+    &quot;&quot;&quot;</span>
+
+
+<span class="s0">def </span><span class="s1">_is_broken_pipe_error(exc_class: Type[BaseException]</span><span class="s0">, </span><span class="s1">exc: BaseException) -&gt; bool:</span>
+    <span class="s0">if </span><span class="s1">exc_class </span><span class="s0">is </span><span class="s1">BrokenPipeError:</span>
+        <span class="s0">return True</span>
+
+    <span class="s4"># On Windows, a broken pipe can show up as EINVAL rather than EPIPE:</span>
+    <span class="s4"># https://bugs.python.org/issue19612</span>
+    <span class="s4"># https://bugs.python.org/issue30418</span>
+    <span class="s0">if not </span><span class="s1">WINDOWS:</span>
+        <span class="s0">return False</span>
+
+    <span class="s0">return </span><span class="s1">isinstance(exc</span><span class="s0">, </span><span class="s1">OSError) </span><span class="s0">and </span><span class="s1">exc.errno </span><span class="s0">in </span><span class="s1">(errno.EINVAL</span><span class="s0">, </span><span class="s1">errno.EPIPE)</span>
+
+
+<span class="s1">@contextlib.contextmanager</span>
+<span class="s0">def </span><span class="s1">indent_log(num: int = </span><span class="s5">2</span><span class="s1">) -&gt; Generator[</span><span class="s0">None, None, None</span><span class="s1">]:</span>
+    <span class="s3">&quot;&quot;&quot; 
+    A context manager which will cause the log output to be indented for any 
+    log messages emitted inside it. 
+    &quot;&quot;&quot;</span>
+    <span class="s4"># For thread-safety</span>
+    <span class="s1">_log_state.indentation = get_indentation()</span>
+    <span class="s1">_log_state.indentation += num</span>
+    <span class="s0">try</span><span class="s1">:</span>
+        <span class="s0">yield</span>
+    <span class="s0">finally</span><span class="s1">:</span>
+        <span class="s1">_log_state.indentation -= num</span>
+
+
+<span class="s0">def </span><span class="s1">get_indentation() -&gt; int:</span>
+    <span class="s0">return </span><span class="s1">getattr(_log_state</span><span class="s0">, </span><span class="s2">&quot;indentation&quot;</span><span class="s0">, </span><span class="s5">0</span><span class="s1">)</span>
+
+
+<span class="s0">class </span><span class="s1">IndentingFormatter(logging.Formatter):</span>
+    <span class="s1">default_time_format = </span><span class="s2">&quot;%Y-%m-%dT%H:%M:%S&quot;</span>
+
+    <span class="s0">def </span><span class="s1">__init__(</span>
+        <span class="s1">self</span><span class="s0">,</span>
+        <span class="s1">*args: Any</span><span class="s0">,</span>
+        <span class="s1">add_timestamp: bool = </span><span class="s0">False,</span>
+        <span class="s1">**kwargs: Any</span><span class="s0">,</span>
+    <span class="s1">) -&gt; </span><span class="s0">None</span><span class="s1">:</span>
+        <span class="s3">&quot;&quot;&quot; 
+        A logging.Formatter that obeys the indent_log() context manager. 
+ 
+        :param add_timestamp: A bool indicating output lines should be prefixed 
+            with their record's timestamp. 
+        &quot;&quot;&quot;</span>
+        <span class="s1">self.add_timestamp = add_timestamp</span>
+        <span class="s1">super().__init__(*args</span><span class="s0">, </span><span class="s1">**kwargs)</span>
+
+    <span class="s0">def </span><span class="s1">get_message_start(self</span><span class="s0">, </span><span class="s1">formatted: str</span><span class="s0">, </span><span class="s1">levelno: int) -&gt; str:</span>
+        <span class="s3">&quot;&quot;&quot; 
+        Return the start of the formatted log message (not counting the 
+        prefix to add to each line). 
+        &quot;&quot;&quot;</span>
+        <span class="s0">if </span><span class="s1">levelno &lt; logging.WARNING:</span>
+            <span class="s0">return </span><span class="s2">&quot;&quot;</span>
+        <span class="s0">if </span><span class="s1">formatted.startswith(DEPRECATION_MSG_PREFIX):</span>
+            <span class="s4"># Then the message already has a prefix.  We don't want it to</span>
+            <span class="s4"># look like &quot;WARNING: DEPRECATION: ....&quot;</span>
+            <span class="s0">return </span><span class="s2">&quot;&quot;</span>
+        <span class="s0">if </span><span class="s1">levelno &lt; logging.ERROR:</span>
+            <span class="s0">return </span><span class="s2">&quot;WARNING: &quot;</span>
+
+        <span class="s0">return </span><span class="s2">&quot;ERROR: &quot;</span>
+
+    <span class="s0">def </span><span class="s1">format(self</span><span class="s0">, </span><span class="s1">record: logging.LogRecord) -&gt; str:</span>
+        <span class="s3">&quot;&quot;&quot; 
+        Calls the standard formatter, but will indent all of the log message 
+        lines by our current indentation level. 
+        &quot;&quot;&quot;</span>
+        <span class="s1">formatted = super().format(record)</span>
+        <span class="s1">message_start = self.get_message_start(formatted</span><span class="s0">, </span><span class="s1">record.levelno)</span>
+        <span class="s1">formatted = message_start + formatted</span>
+
+        <span class="s1">prefix = </span><span class="s2">&quot;&quot;</span>
+        <span class="s0">if </span><span class="s1">self.add_timestamp:</span>
+            <span class="s1">prefix = </span><span class="s2">f&quot;</span><span class="s0">{</span><span class="s1">self.formatTime(record)</span><span class="s0">} </span><span class="s2">&quot;</span>
+        <span class="s1">prefix += </span><span class="s2">&quot; &quot; </span><span class="s1">* get_indentation()</span>
+        <span class="s1">formatted = </span><span class="s2">&quot;&quot;</span><span class="s1">.join([prefix + line </span><span class="s0">for </span><span class="s1">line </span><span class="s0">in </span><span class="s1">formatted.splitlines(</span><span class="s0">True</span><span class="s1">)])</span>
+        <span class="s0">return </span><span class="s1">formatted</span>
+
+
+<span class="s1">@dataclass</span>
+<span class="s0">class </span><span class="s1">IndentedRenderable:</span>
+    <span class="s1">renderable: RenderableType</span>
+    <span class="s1">indent: int</span>
+
+    <span class="s0">def </span><span class="s1">__rich_console__(</span>
+        <span class="s1">self</span><span class="s0">, </span><span class="s1">console: Console</span><span class="s0">, </span><span class="s1">options: ConsoleOptions</span>
+    <span class="s1">) -&gt; RenderResult:</span>
+        <span class="s1">segments = console.render(self.renderable</span><span class="s0">, </span><span class="s1">options)</span>
+        <span class="s1">lines = Segment.split_lines(segments)</span>
+        <span class="s0">for </span><span class="s1">line </span><span class="s0">in </span><span class="s1">lines:</span>
+            <span class="s0">yield </span><span class="s1">Segment(</span><span class="s2">&quot; &quot; </span><span class="s1">* self.indent)</span>
+            <span class="s0">yield from </span><span class="s1">line</span>
+            <span class="s0">yield </span><span class="s1">Segment(</span><span class="s2">&quot;</span><span class="s0">\n</span><span class="s2">&quot;</span><span class="s1">)</span>
+
+
+<span class="s0">class </span><span class="s1">RichPipStreamHandler(RichHandler):</span>
+    <span class="s1">KEYWORDS: ClassVar[Optional[List[str]]] = []</span>
+
+    <span class="s0">def </span><span class="s1">__init__(self</span><span class="s0">, </span><span class="s1">stream: Optional[TextIO]</span><span class="s0">, </span><span class="s1">no_color: bool) -&gt; </span><span class="s0">None</span><span class="s1">:</span>
+        <span class="s1">super().__init__(</span>
+            <span class="s1">console=Console(file=stream</span><span class="s0">, </span><span class="s1">no_color=no_color</span><span class="s0">, </span><span class="s1">soft_wrap=</span><span class="s0">True</span><span class="s1">)</span><span class="s0">,</span>
+            <span class="s1">show_time=</span><span class="s0">False,</span>
+            <span class="s1">show_level=</span><span class="s0">False,</span>
+            <span class="s1">show_path=</span><span class="s0">False,</span>
+            <span class="s1">highlighter=NullHighlighter()</span><span class="s0">,</span>
+        <span class="s1">)</span>
+
+    <span class="s4"># Our custom override on Rich's logger, to make things work as we need them to.</span>
+    <span class="s0">def </span><span class="s1">emit(self</span><span class="s0">, </span><span class="s1">record: logging.LogRecord) -&gt; </span><span class="s0">None</span><span class="s1">:</span>
+        <span class="s1">style: Optional[Style] = </span><span class="s0">None</span>
+
+        <span class="s4"># If we are given a diagnostic error to present, present it with indentation.</span>
+        <span class="s0">assert </span><span class="s1">isinstance(record.args</span><span class="s0">, </span><span class="s1">tuple)</span>
+        <span class="s0">if </span><span class="s1">record.msg == </span><span class="s2">&quot;[present-rich] %s&quot; </span><span class="s0">and </span><span class="s1">len(record.args) == </span><span class="s5">1</span><span class="s1">:</span>
+            <span class="s1">rich_renderable = record.args[</span><span class="s5">0</span><span class="s1">]</span>
+            <span class="s0">assert </span><span class="s1">isinstance(</span>
+                <span class="s1">rich_renderable</span><span class="s0">, </span><span class="s1">(ConsoleRenderable</span><span class="s0">, </span><span class="s1">RichCast</span><span class="s0">, </span><span class="s1">str)</span>
+            <span class="s1">)</span><span class="s0">, </span><span class="s2">f&quot;</span><span class="s0">{</span><span class="s1">rich_renderable</span><span class="s0">} </span><span class="s2">is not rich-console-renderable&quot;</span>
+
+            <span class="s1">renderable: RenderableType = IndentedRenderable(</span>
+                <span class="s1">rich_renderable</span><span class="s0">, </span><span class="s1">indent=get_indentation()</span>
+            <span class="s1">)</span>
+        <span class="s0">else</span><span class="s1">:</span>
+            <span class="s1">message = self.format(record)</span>
+            <span class="s1">renderable = self.render_message(record</span><span class="s0">, </span><span class="s1">message)</span>
+            <span class="s0">if </span><span class="s1">record.levelno </span><span class="s0">is not None</span><span class="s1">:</span>
+                <span class="s0">if </span><span class="s1">record.levelno &gt;= logging.ERROR:</span>
+                    <span class="s1">style = Style(color=</span><span class="s2">&quot;red&quot;</span><span class="s1">)</span>
+                <span class="s0">elif </span><span class="s1">record.levelno &gt;= logging.WARNING:</span>
+                    <span class="s1">style = Style(color=</span><span class="s2">&quot;yellow&quot;</span><span class="s1">)</span>
+
+        <span class="s0">try</span><span class="s1">:</span>
+            <span class="s1">self.console.print(renderable</span><span class="s0">, </span><span class="s1">overflow=</span><span class="s2">&quot;ignore&quot;</span><span class="s0">, </span><span class="s1">crop=</span><span class="s0">False, </span><span class="s1">style=style)</span>
+        <span class="s0">except </span><span class="s1">Exception:</span>
+            <span class="s1">self.handleError(record)</span>
+
+    <span class="s0">def </span><span class="s1">handleError(self</span><span class="s0">, </span><span class="s1">record: logging.LogRecord) -&gt; </span><span class="s0">None</span><span class="s1">:</span>
+        <span class="s3">&quot;&quot;&quot;Called when logging is unable to log some output.&quot;&quot;&quot;</span>
+
+        <span class="s1">exc_class</span><span class="s0">, </span><span class="s1">exc = sys.exc_info()[:</span><span class="s5">2</span><span class="s1">]</span>
+        <span class="s4"># If a broken pipe occurred while calling write() or flush() on the</span>
+        <span class="s4"># stdout stream in logging's Handler.emit(), then raise our special</span>
+        <span class="s4"># exception so we can handle it in main() instead of logging the</span>
+        <span class="s4"># broken pipe error and continuing.</span>
+        <span class="s0">if </span><span class="s1">(</span>
+            <span class="s1">exc_class</span>
+            <span class="s0">and </span><span class="s1">exc</span>
+            <span class="s0">and </span><span class="s1">self.console.file </span><span class="s0">is </span><span class="s1">sys.stdout</span>
+            <span class="s0">and </span><span class="s1">_is_broken_pipe_error(exc_class</span><span class="s0">, </span><span class="s1">exc)</span>
+        <span class="s1">):</span>
+            <span class="s0">raise </span><span class="s1">BrokenStdoutLoggingError()</span>
+
+        <span class="s0">return </span><span class="s1">super().handleError(record)</span>
+
+
+<span class="s0">class </span><span class="s1">BetterRotatingFileHandler(logging.handlers.RotatingFileHandler):</span>
+    <span class="s0">def </span><span class="s1">_open(self) -&gt; TextIOWrapper:</span>
+        <span class="s1">ensure_dir(os.path.dirname(self.baseFilename))</span>
+        <span class="s0">return </span><span class="s1">super()._open()</span>
+
+
+<span class="s0">class </span><span class="s1">MaxLevelFilter(Filter):</span>
+    <span class="s0">def </span><span class="s1">__init__(self</span><span class="s0">, </span><span class="s1">level: int) -&gt; </span><span class="s0">None</span><span class="s1">:</span>
+        <span class="s1">self.level = level</span>
+
+    <span class="s0">def </span><span class="s1">filter(self</span><span class="s0">, </span><span class="s1">record: logging.LogRecord) -&gt; bool:</span>
+        <span class="s0">return </span><span class="s1">record.levelno &lt; self.level</span>
+
+
+<span class="s0">class </span><span class="s1">ExcludeLoggerFilter(Filter):</span>
+
+    <span class="s3">&quot;&quot;&quot; 
+    A logging Filter that excludes records from a logger (or its children). 
+    &quot;&quot;&quot;</span>
+
+    <span class="s0">def </span><span class="s1">filter(self</span><span class="s0">, </span><span class="s1">record: logging.LogRecord) -&gt; bool:</span>
+        <span class="s4"># The base Filter class allows only records from a logger (or its</span>
+        <span class="s4"># children).</span>
+        <span class="s0">return not </span><span class="s1">super().filter(record)</span>
+
+
+<span class="s0">def </span><span class="s1">setup_logging(verbosity: int</span><span class="s0">, </span><span class="s1">no_color: bool</span><span class="s0">, </span><span class="s1">user_log_file: Optional[str]) -&gt; int:</span>
+    <span class="s3">&quot;&quot;&quot;Configures and sets up all of the logging 
+ 
+    Returns the requested logging level, as its integer value. 
+    &quot;&quot;&quot;</span>
+
+    <span class="s4"># Determine the level to be logging at.</span>
+    <span class="s0">if </span><span class="s1">verbosity &gt;= </span><span class="s5">2</span><span class="s1">:</span>
+        <span class="s1">level_number = logging.DEBUG</span>
+    <span class="s0">elif </span><span class="s1">verbosity == </span><span class="s5">1</span><span class="s1">:</span>
+        <span class="s1">level_number = VERBOSE</span>
+    <span class="s0">elif </span><span class="s1">verbosity == -</span><span class="s5">1</span><span class="s1">:</span>
+        <span class="s1">level_number = logging.WARNING</span>
+    <span class="s0">elif </span><span class="s1">verbosity == -</span><span class="s5">2</span><span class="s1">:</span>
+        <span class="s1">level_number = logging.ERROR</span>
+    <span class="s0">elif </span><span class="s1">verbosity &lt;= -</span><span class="s5">3</span><span class="s1">:</span>
+        <span class="s1">level_number = logging.CRITICAL</span>
+    <span class="s0">else</span><span class="s1">:</span>
+        <span class="s1">level_number = logging.INFO</span>
+
+    <span class="s1">level = logging.getLevelName(level_number)</span>
+
+    <span class="s4"># The &quot;root&quot; logger should match the &quot;console&quot; level *unless* we also need</span>
+    <span class="s4"># to log to a user log file.</span>
+    <span class="s1">include_user_log = user_log_file </span><span class="s0">is not None</span>
+    <span class="s0">if </span><span class="s1">include_user_log:</span>
+        <span class="s1">additional_log_file = user_log_file</span>
+        <span class="s1">root_level = </span><span class="s2">&quot;DEBUG&quot;</span>
+    <span class="s0">else</span><span class="s1">:</span>
+        <span class="s1">additional_log_file = </span><span class="s2">&quot;/dev/null&quot;</span>
+        <span class="s1">root_level = level</span>
+
+    <span class="s4"># Disable any logging besides WARNING unless we have DEBUG level logging</span>
+    <span class="s4"># enabled for vendored libraries.</span>
+    <span class="s1">vendored_log_level = </span><span class="s2">&quot;WARNING&quot; </span><span class="s0">if </span><span class="s1">level </span><span class="s0">in </span><span class="s1">[</span><span class="s2">&quot;INFO&quot;</span><span class="s0">, </span><span class="s2">&quot;ERROR&quot;</span><span class="s1">] </span><span class="s0">else </span><span class="s2">&quot;DEBUG&quot;</span>
+
+    <span class="s4"># Shorthands for clarity</span>
+    <span class="s1">log_streams = {</span>
+        <span class="s2">&quot;stdout&quot;</span><span class="s1">: </span><span class="s2">&quot;ext://sys.stdout&quot;</span><span class="s0">,</span>
+        <span class="s2">&quot;stderr&quot;</span><span class="s1">: </span><span class="s2">&quot;ext://sys.stderr&quot;</span><span class="s0">,</span>
+    <span class="s1">}</span>
+    <span class="s1">handler_classes = {</span>
+        <span class="s2">&quot;stream&quot;</span><span class="s1">: </span><span class="s2">&quot;pip._internal.utils.logging.RichPipStreamHandler&quot;</span><span class="s0">,</span>
+        <span class="s2">&quot;file&quot;</span><span class="s1">: </span><span class="s2">&quot;pip._internal.utils.logging.BetterRotatingFileHandler&quot;</span><span class="s0">,</span>
+    <span class="s1">}</span>
+    <span class="s1">handlers = [</span><span class="s2">&quot;console&quot;</span><span class="s0">, </span><span class="s2">&quot;console_errors&quot;</span><span class="s0">, </span><span class="s2">&quot;console_subprocess&quot;</span><span class="s1">] + (</span>
+        <span class="s1">[</span><span class="s2">&quot;user_log&quot;</span><span class="s1">] </span><span class="s0">if </span><span class="s1">include_user_log </span><span class="s0">else </span><span class="s1">[]</span>
+    <span class="s1">)</span>
+
+    <span class="s1">logging.config.dictConfig(</span>
+        <span class="s1">{</span>
+            <span class="s2">&quot;version&quot;</span><span class="s1">: </span><span class="s5">1</span><span class="s0">,</span>
+            <span class="s2">&quot;disable_existing_loggers&quot;</span><span class="s1">: </span><span class="s0">False,</span>
+            <span class="s2">&quot;filters&quot;</span><span class="s1">: {</span>
+                <span class="s2">&quot;exclude_warnings&quot;</span><span class="s1">: {</span>
+                    <span class="s2">&quot;()&quot;</span><span class="s1">: </span><span class="s2">&quot;pip._internal.utils.logging.MaxLevelFilter&quot;</span><span class="s0">,</span>
+                    <span class="s2">&quot;level&quot;</span><span class="s1">: logging.WARNING</span><span class="s0">,</span>
+                <span class="s1">}</span><span class="s0">,</span>
+                <span class="s2">&quot;restrict_to_subprocess&quot;</span><span class="s1">: {</span>
+                    <span class="s2">&quot;()&quot;</span><span class="s1">: </span><span class="s2">&quot;logging.Filter&quot;</span><span class="s0">,</span>
+                    <span class="s2">&quot;name&quot;</span><span class="s1">: subprocess_logger.name</span><span class="s0">,</span>
+                <span class="s1">}</span><span class="s0">,</span>
+                <span class="s2">&quot;exclude_subprocess&quot;</span><span class="s1">: {</span>
+                    <span class="s2">&quot;()&quot;</span><span class="s1">: </span><span class="s2">&quot;pip._internal.utils.logging.ExcludeLoggerFilter&quot;</span><span class="s0">,</span>
+                    <span class="s2">&quot;name&quot;</span><span class="s1">: subprocess_logger.name</span><span class="s0">,</span>
+                <span class="s1">}</span><span class="s0">,</span>
+            <span class="s1">}</span><span class="s0">,</span>
+            <span class="s2">&quot;formatters&quot;</span><span class="s1">: {</span>
+                <span class="s2">&quot;indent&quot;</span><span class="s1">: {</span>
+                    <span class="s2">&quot;()&quot;</span><span class="s1">: IndentingFormatter</span><span class="s0">,</span>
+                    <span class="s2">&quot;format&quot;</span><span class="s1">: </span><span class="s2">&quot;%(message)s&quot;</span><span class="s0">,</span>
+                <span class="s1">}</span><span class="s0">,</span>
+                <span class="s2">&quot;indent_with_timestamp&quot;</span><span class="s1">: {</span>
+                    <span class="s2">&quot;()&quot;</span><span class="s1">: IndentingFormatter</span><span class="s0">,</span>
+                    <span class="s2">&quot;format&quot;</span><span class="s1">: </span><span class="s2">&quot;%(message)s&quot;</span><span class="s0">,</span>
+                    <span class="s2">&quot;add_timestamp&quot;</span><span class="s1">: </span><span class="s0">True,</span>
+                <span class="s1">}</span><span class="s0">,</span>
+            <span class="s1">}</span><span class="s0">,</span>
+            <span class="s2">&quot;handlers&quot;</span><span class="s1">: {</span>
+                <span class="s2">&quot;console&quot;</span><span class="s1">: {</span>
+                    <span class="s2">&quot;level&quot;</span><span class="s1">: level</span><span class="s0">,</span>
+                    <span class="s2">&quot;class&quot;</span><span class="s1">: handler_classes[</span><span class="s2">&quot;stream&quot;</span><span class="s1">]</span><span class="s0">,</span>
+                    <span class="s2">&quot;no_color&quot;</span><span class="s1">: no_color</span><span class="s0">,</span>
+                    <span class="s2">&quot;stream&quot;</span><span class="s1">: log_streams[</span><span class="s2">&quot;stdout&quot;</span><span class="s1">]</span><span class="s0">,</span>
+                    <span class="s2">&quot;filters&quot;</span><span class="s1">: [</span><span class="s2">&quot;exclude_subprocess&quot;</span><span class="s0">, </span><span class="s2">&quot;exclude_warnings&quot;</span><span class="s1">]</span><span class="s0">,</span>
+                    <span class="s2">&quot;formatter&quot;</span><span class="s1">: </span><span class="s2">&quot;indent&quot;</span><span class="s0">,</span>
+                <span class="s1">}</span><span class="s0">,</span>
+                <span class="s2">&quot;console_errors&quot;</span><span class="s1">: {</span>
+                    <span class="s2">&quot;level&quot;</span><span class="s1">: </span><span class="s2">&quot;WARNING&quot;</span><span class="s0">,</span>
+                    <span class="s2">&quot;class&quot;</span><span class="s1">: handler_classes[</span><span class="s2">&quot;stream&quot;</span><span class="s1">]</span><span class="s0">,</span>
+                    <span class="s2">&quot;no_color&quot;</span><span class="s1">: no_color</span><span class="s0">,</span>
+                    <span class="s2">&quot;stream&quot;</span><span class="s1">: log_streams[</span><span class="s2">&quot;stderr&quot;</span><span class="s1">]</span><span class="s0">,</span>
+                    <span class="s2">&quot;filters&quot;</span><span class="s1">: [</span><span class="s2">&quot;exclude_subprocess&quot;</span><span class="s1">]</span><span class="s0">,</span>
+                    <span class="s2">&quot;formatter&quot;</span><span class="s1">: </span><span class="s2">&quot;indent&quot;</span><span class="s0">,</span>
+                <span class="s1">}</span><span class="s0">,</span>
+                <span class="s4"># A handler responsible for logging to the console messages</span>
+                <span class="s4"># from the &quot;subprocessor&quot; logger.</span>
+                <span class="s2">&quot;console_subprocess&quot;</span><span class="s1">: {</span>
+                    <span class="s2">&quot;level&quot;</span><span class="s1">: level</span><span class="s0">,</span>
+                    <span class="s2">&quot;class&quot;</span><span class="s1">: handler_classes[</span><span class="s2">&quot;stream&quot;</span><span class="s1">]</span><span class="s0">,</span>
+                    <span class="s2">&quot;stream&quot;</span><span class="s1">: log_streams[</span><span class="s2">&quot;stderr&quot;</span><span class="s1">]</span><span class="s0">,</span>
+                    <span class="s2">&quot;no_color&quot;</span><span class="s1">: no_color</span><span class="s0">,</span>
+                    <span class="s2">&quot;filters&quot;</span><span class="s1">: [</span><span class="s2">&quot;restrict_to_subprocess&quot;</span><span class="s1">]</span><span class="s0">,</span>
+                    <span class="s2">&quot;formatter&quot;</span><span class="s1">: </span><span class="s2">&quot;indent&quot;</span><span class="s0">,</span>
+                <span class="s1">}</span><span class="s0">,</span>
+                <span class="s2">&quot;user_log&quot;</span><span class="s1">: {</span>
+                    <span class="s2">&quot;level&quot;</span><span class="s1">: </span><span class="s2">&quot;DEBUG&quot;</span><span class="s0">,</span>
+                    <span class="s2">&quot;class&quot;</span><span class="s1">: handler_classes[</span><span class="s2">&quot;file&quot;</span><span class="s1">]</span><span class="s0">,</span>
+                    <span class="s2">&quot;filename&quot;</span><span class="s1">: additional_log_file</span><span class="s0">,</span>
+                    <span class="s2">&quot;encoding&quot;</span><span class="s1">: </span><span class="s2">&quot;utf-8&quot;</span><span class="s0">,</span>
+                    <span class="s2">&quot;delay&quot;</span><span class="s1">: </span><span class="s0">True,</span>
+                    <span class="s2">&quot;formatter&quot;</span><span class="s1">: </span><span class="s2">&quot;indent_with_timestamp&quot;</span><span class="s0">,</span>
+                <span class="s1">}</span><span class="s0">,</span>
+            <span class="s1">}</span><span class="s0">,</span>
+            <span class="s2">&quot;root&quot;</span><span class="s1">: {</span>
+                <span class="s2">&quot;level&quot;</span><span class="s1">: root_level</span><span class="s0">,</span>
+                <span class="s2">&quot;handlers&quot;</span><span class="s1">: handlers</span><span class="s0">,</span>
+            <span class="s1">}</span><span class="s0">,</span>
+            <span class="s2">&quot;loggers&quot;</span><span class="s1">: {</span><span class="s2">&quot;pip._vendor&quot;</span><span class="s1">: {</span><span class="s2">&quot;level&quot;</span><span class="s1">: vendored_log_level}}</span><span class="s0">,</span>
+        <span class="s1">}</span>
+    <span class="s1">)</span>
+
+    <span class="s0">return </span><span class="s1">level_number</span>
+</pre>
+</body>
+</html>

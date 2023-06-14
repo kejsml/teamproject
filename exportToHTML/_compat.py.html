@@ -1,0 +1,75 @@
+<html>
+<head>
+<title>_compat.py</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #cc7832;}
+.s1 { color: #a9b7c6;}
+.s2 { color: #6a8759;}
+.s3 { color: #629755; font-style: italic;}
+</style>
+</head>
+<body bgcolor="#1e1f22">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+_compat.py</font>
+</center></td></tr></table>
+<pre><span class="s0">import </span><span class="s1">importlib.metadata</span>
+<span class="s0">from </span><span class="s1">typing </span><span class="s0">import </span><span class="s1">Any</span><span class="s0">, </span><span class="s1">Optional</span><span class="s0">, </span><span class="s1">Protocol</span><span class="s0">, </span><span class="s1">cast</span>
+
+
+<span class="s0">class </span><span class="s1">BadMetadata(ValueError):</span>
+    <span class="s0">def </span><span class="s1">__init__(self</span><span class="s0">, </span><span class="s1">dist: importlib.metadata.Distribution</span><span class="s0">, </span><span class="s1">*</span><span class="s0">, </span><span class="s1">reason: str) -&gt; </span><span class="s0">None</span><span class="s1">:</span>
+        <span class="s1">self.dist = dist</span>
+        <span class="s1">self.reason = reason</span>
+
+    <span class="s0">def </span><span class="s1">__str__(self) -&gt; str:</span>
+        <span class="s0">return </span><span class="s2">f&quot;Bad metadata in </span><span class="s0">{</span><span class="s1">self.dist</span><span class="s0">} </span><span class="s2">(</span><span class="s0">{</span><span class="s1">self.reason</span><span class="s0">}</span><span class="s2">)&quot;</span>
+
+
+<span class="s0">class </span><span class="s1">BasePath(Protocol):</span>
+    <span class="s3">&quot;&quot;&quot;A protocol that various path objects conform. 
+ 
+    This exists because importlib.metadata uses both ``pathlib.Path`` and 
+    ``zipfile.Path``, and we need a common base for type hints (Union does not 
+    work well since ``zipfile.Path`` is too new for our linter setup). 
+ 
+    This does not mean to be exhaustive, but only contains things that present 
+    in both classes *that we need*. 
+    &quot;&quot;&quot;</span>
+
+    <span class="s1">@property</span>
+    <span class="s0">def </span><span class="s1">name(self) -&gt; str:</span>
+        <span class="s0">raise </span><span class="s1">NotImplementedError()</span>
+
+    <span class="s1">@property</span>
+    <span class="s0">def </span><span class="s1">parent(self) -&gt; </span><span class="s2">&quot;BasePath&quot;</span><span class="s1">:</span>
+        <span class="s0">raise </span><span class="s1">NotImplementedError()</span>
+
+
+<span class="s0">def </span><span class="s1">get_info_location(d: importlib.metadata.Distribution) -&gt; Optional[BasePath]:</span>
+    <span class="s3">&quot;&quot;&quot;Find the path to the distribution's metadata directory. 
+ 
+    HACK: This relies on importlib.metadata's private ``_path`` attribute. Not 
+    all distributions exist on disk, so importlib.metadata is correct to not 
+    expose the attribute as public. But pip's code base is old and not as clean, 
+    so we do this to avoid having to rewrite too many things. Hopefully we can 
+    eliminate this some day. 
+    &quot;&quot;&quot;</span>
+    <span class="s0">return </span><span class="s1">getattr(d</span><span class="s0">, </span><span class="s2">&quot;_path&quot;</span><span class="s0">, None</span><span class="s1">)</span>
+
+
+<span class="s0">def </span><span class="s1">get_dist_name(dist: importlib.metadata.Distribution) -&gt; str:</span>
+    <span class="s3">&quot;&quot;&quot;Get the distribution's project name. 
+ 
+    The ``name`` attribute is only available in Python 3.10 or later. We are 
+    targeting exactly that, but Mypy does not know this. 
+    &quot;&quot;&quot;</span>
+    <span class="s1">name = cast(Any</span><span class="s0">, </span><span class="s1">dist).name</span>
+    <span class="s0">if not </span><span class="s1">isinstance(name</span><span class="s0">, </span><span class="s1">str):</span>
+        <span class="s0">raise </span><span class="s1">BadMetadata(dist</span><span class="s0">, </span><span class="s1">reason=</span><span class="s2">&quot;invalid metadata entry 'name'&quot;</span><span class="s1">)</span>
+    <span class="s0">return </span><span class="s1">name</span>
+</pre>
+</body>
+</html>

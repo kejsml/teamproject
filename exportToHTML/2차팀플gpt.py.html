@@ -1,0 +1,110 @@
+<html>
+<head>
+<title>2차팀플gpt.py</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #cc7832;}
+.s1 { color: #a9b7c6;}
+.s2 { color: #808080;}
+.s3 { color: #6a8759;}
+.s4 { color: #6897bb;}
+</style>
+</head>
+<body bgcolor="#1e1f22">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+2차팀플gpt.py</font>
+</center></td></tr></table>
+<pre><span class="s0">import </span><span class="s1">dash</span>
+<span class="s0">from </span><span class="s1">dash </span><span class="s0">import </span><span class="s1">dcc</span>
+<span class="s0">from </span><span class="s1">dash </span><span class="s0">import </span><span class="s1">html</span>
+<span class="s0">import </span><span class="s1">h5py</span>
+
+<span class="s2"># HDF5 파일 불러오기</span>
+<span class="s1">hdf = h5py.File(</span><span class="s3">'output.hdf5'</span><span class="s0">, </span><span class="s3">'r'</span><span class="s1">)</span>
+
+<span class="s2"># 데이터셋 이름들을 리스트로 가져오기</span>
+<span class="s1">dataset_names = list(hdf.keys())</span>
+
+<span class="s2"># 그룹 설정</span>
+<span class="s1">groups = {</span>
+    <span class="s3">'Joint'</span><span class="s1">: [</span><span class="s3">'joint1'</span><span class="s0">, </span><span class="s3">'joint2'</span><span class="s0">, </span><span class="s3">'joint3'</span><span class="s0">, </span><span class="s3">'joint4'</span><span class="s0">, </span><span class="s3">'joint5'</span><span class="s0">, </span><span class="s3">'joint6'</span><span class="s1">]</span><span class="s0">,</span>
+    <span class="s3">'Velocity'</span><span class="s1">: [</span><span class="s3">'velocity1'</span><span class="s0">, </span><span class="s3">'velocity2'</span><span class="s0">, </span><span class="s3">'velocity3'</span><span class="s0">, </span><span class="s3">'velocity4'</span><span class="s0">, </span><span class="s3">'velocity5'</span><span class="s0">, </span><span class="s3">'velocity6'</span><span class="s1">]</span>
+<span class="s1">}</span>
+
+<span class="s2"># Dash 애플리케이션 생성</span>
+<span class="s1">app = dash.Dash(__name__)</span>
+
+<span class="s2"># 애플리케이션 레이아웃 설정</span>
+<span class="s1">app.layout = html.Div([</span>
+    <span class="s2"># Header</span>
+    <span class="s1">html.Div([</span>
+        <span class="s1">html.Div([</span>
+            <span class="s1">html.Img(src=</span><span class="s3">'assets/logo.svg'</span><span class="s0">, </span><span class="s1">width=</span><span class="s3">'180px'</span><span class="s1">)</span>
+        <span class="s1">]</span><span class="s0">, </span><span class="s1">className=</span><span class="s3">'koreatech-header-logo'</span><span class="s1">)</span>
+    <span class="s1">]</span><span class="s0">, </span><span class="s1">className=</span><span class="s3">'koreatech-header'</span><span class="s1">)</span><span class="s0">,</span>
+
+    <span class="s2"># 제목</span>
+    <span class="s1">html.H1(</span><span class="s3">'데이터 시각화'</span><span class="s0">, </span><span class="s1">className=</span><span class="s3">'title'</span><span class="s0">, </span><span class="s1">style={</span><span class="s3">'font-family'</span><span class="s1">: </span><span class="s3">'Arial, sans-serif'</span><span class="s1">})</span><span class="s0">,</span>
+
+    <span class="s2"># 그룹 선택 박스</span>
+    <span class="s1">dcc.Dropdown(</span>
+        <span class="s1">id=</span><span class="s3">'group-dropdown'</span><span class="s0">,</span>
+        <span class="s1">options=[{</span><span class="s3">'label'</span><span class="s1">: group</span><span class="s0">, </span><span class="s3">'value'</span><span class="s1">: group} </span><span class="s0">for </span><span class="s1">group </span><span class="s0">in </span><span class="s1">groups.keys()]</span><span class="s0">,</span>
+        <span class="s1">value=list(groups.keys())[</span><span class="s4">0</span><span class="s1">]</span>
+    <span class="s1">)</span><span class="s0">,</span>
+
+    <span class="s2"># 콤보박스와 그래프</span>
+    <span class="s1">html.Div([</span>
+        <span class="s2"># 콤보박스</span>
+        <span class="s1">dcc.Dropdown(</span>
+            <span class="s1">id=</span><span class="s3">'graph-dropdown'</span><span class="s0">,</span>
+            <span class="s1">options=[{</span><span class="s3">'label'</span><span class="s1">: name</span><span class="s0">, </span><span class="s3">'value'</span><span class="s1">: name} </span><span class="s0">for </span><span class="s1">name </span><span class="s0">in </span><span class="s1">groups[list(groups.keys())[</span><span class="s4">0</span><span class="s1">]]]</span><span class="s0">,</span>
+            <span class="s1">value=groups[list(groups.keys())[</span><span class="s4">0</span><span class="s1">]][</span><span class="s4">0</span><span class="s1">]</span>
+        <span class="s1">)</span><span class="s0">,</span>
+
+        <span class="s2"># 그래프</span>
+        <span class="s1">dcc.Graph(id=</span><span class="s3">'graph'</span><span class="s1">)</span>
+    <span class="s1">]</span><span class="s0">, </span><span class="s1">className=</span><span class="s3">'graph-container'</span><span class="s1">)</span>
+<span class="s1">])</span>
+
+
+<span class="s2"># 그룹 선택 박스 콜백 함수</span>
+<span class="s1">@app.callback(</span>
+    <span class="s1">dash.dependencies.Output(</span><span class="s3">'graph-dropdown'</span><span class="s0">, </span><span class="s3">'options'</span><span class="s1">)</span><span class="s0">,</span>
+    <span class="s1">[dash.dependencies.Input(</span><span class="s3">'group-dropdown'</span><span class="s0">, </span><span class="s3">'value'</span><span class="s1">)]</span>
+<span class="s1">)</span>
+<span class="s0">def </span><span class="s1">update_graph_dropdown_options(selected_group):</span>
+    <span class="s0">return </span><span class="s1">[{</span><span class="s3">'label'</span><span class="s1">: name</span><span class="s0">, </span><span class="s3">'value'</span><span class="s1">: name} </span><span class="s0">for </span><span class="s1">name </span><span class="s0">in </span><span class="s1">groups[selected_group]]</span>
+
+
+<span class="s2"># 그래프 콜백 함수</span>
+<span class="s1">@app.callback(</span>
+    <span class="s1">dash.dependencies.Output(</span><span class="s3">'graph'</span><span class="s0">, </span><span class="s3">'figure'</span><span class="s1">)</span><span class="s0">,</span>
+    <span class="s1">[dash.dependencies.Input(</span><span class="s3">'group-dropdown'</span><span class="s0">, </span><span class="s3">'value'</span><span class="s1">)</span><span class="s0">,</span>
+     <span class="s1">dash.dependencies.Input(</span><span class="s3">'graph-dropdown'</span><span class="s0">, </span><span class="s3">'value'</span><span class="s1">)]</span>
+<span class="s1">)</span>
+<span class="s0">def </span><span class="s1">update_graph(selected_group</span><span class="s0">, </span><span class="s1">selected_dataset):</span>
+    <span class="s2"># 선택한 데이터셋 가져오기</span>
+    <span class="s1">data = hdf[selected_dataset][:]</span>
+
+    <span class="s2"># 그래프 생성</span>
+    <span class="s1">figure = {</span>
+        <span class="s3">'data'</span><span class="s1">: [</span>
+            <span class="s1">{</span><span class="s3">'x'</span><span class="s1">: list(range(len(data)))</span><span class="s0">, </span><span class="s3">'y'</span><span class="s1">: data</span><span class="s0">, </span><span class="s3">'type'</span><span class="s1">: </span><span class="s3">'line'</span><span class="s1">}</span>
+        <span class="s1">]</span><span class="s0">,</span>
+        <span class="s3">'layout'</span><span class="s1">: {</span>
+            <span class="s3">'title'</span><span class="s1">: selected_dataset</span>
+        <span class="s1">}</span>
+    <span class="s1">}</span>
+
+    <span class="s0">return </span><span class="s1">figure</span>
+
+
+<span class="s2"># 애플리케이션 실행</span>
+<span class="s0">if </span><span class="s1">__name__ == </span><span class="s3">'__main__'</span><span class="s1">:</span>
+    <span class="s1">app.run_server(debug=</span><span class="s0">True</span><span class="s1">)</span>
+</pre>
+</body>
+</html>

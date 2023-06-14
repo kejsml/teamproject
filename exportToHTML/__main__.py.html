@@ -1,0 +1,65 @@
+<html>
+<head>
+<title>__main__.py</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #cc7832;}
+.s1 { color: #a9b7c6;}
+.s2 { color: #6a8759;}
+</style>
+</head>
+<body bgcolor="#1e1f22">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#606060" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+__main__.py</font>
+</center></td></tr></table>
+<pre><span class="s0">from </span><span class="s1">__future__ </span><span class="s0">import </span><span class="s1">annotations</span>
+
+<span class="s0">from </span><span class="s1">pip._vendor.platformdirs </span><span class="s0">import </span><span class="s1">PlatformDirs</span><span class="s0">, </span><span class="s1">__version__</span>
+
+<span class="s1">PROPS = (</span>
+    <span class="s2">&quot;user_data_dir&quot;</span><span class="s0">,</span>
+    <span class="s2">&quot;user_config_dir&quot;</span><span class="s0">,</span>
+    <span class="s2">&quot;user_cache_dir&quot;</span><span class="s0">,</span>
+    <span class="s2">&quot;user_state_dir&quot;</span><span class="s0">,</span>
+    <span class="s2">&quot;user_log_dir&quot;</span><span class="s0">,</span>
+    <span class="s2">&quot;user_documents_dir&quot;</span><span class="s0">,</span>
+    <span class="s2">&quot;user_runtime_dir&quot;</span><span class="s0">,</span>
+    <span class="s2">&quot;site_data_dir&quot;</span><span class="s0">,</span>
+    <span class="s2">&quot;site_config_dir&quot;</span><span class="s0">,</span>
+<span class="s1">)</span>
+
+
+<span class="s0">def </span><span class="s1">main() -&gt; </span><span class="s0">None</span><span class="s1">:</span>
+    <span class="s1">app_name = </span><span class="s2">&quot;MyApp&quot;</span>
+    <span class="s1">app_author = </span><span class="s2">&quot;MyCompany&quot;</span>
+
+    <span class="s1">print(</span><span class="s2">f&quot;-- platformdirs </span><span class="s0">{</span><span class="s1">__version__</span><span class="s0">} </span><span class="s2">--&quot;</span><span class="s1">)</span>
+
+    <span class="s1">print(</span><span class="s2">&quot;-- app dirs (with optional 'version')&quot;</span><span class="s1">)</span>
+    <span class="s1">dirs = PlatformDirs(app_name</span><span class="s0">, </span><span class="s1">app_author</span><span class="s0">, </span><span class="s1">version=</span><span class="s2">&quot;1.0&quot;</span><span class="s1">)</span>
+    <span class="s0">for </span><span class="s1">prop </span><span class="s0">in </span><span class="s1">PROPS:</span>
+        <span class="s1">print(</span><span class="s2">f&quot;</span><span class="s0">{</span><span class="s1">prop</span><span class="s0">}</span><span class="s2">: </span><span class="s0">{</span><span class="s1">getattr(dirs</span><span class="s0">, </span><span class="s1">prop)</span><span class="s0">}</span><span class="s2">&quot;</span><span class="s1">)</span>
+
+    <span class="s1">print(</span><span class="s2">&quot;</span><span class="s0">\n</span><span class="s2">-- app dirs (without optional 'version')&quot;</span><span class="s1">)</span>
+    <span class="s1">dirs = PlatformDirs(app_name</span><span class="s0">, </span><span class="s1">app_author)</span>
+    <span class="s0">for </span><span class="s1">prop </span><span class="s0">in </span><span class="s1">PROPS:</span>
+        <span class="s1">print(</span><span class="s2">f&quot;</span><span class="s0">{</span><span class="s1">prop</span><span class="s0">}</span><span class="s2">: </span><span class="s0">{</span><span class="s1">getattr(dirs</span><span class="s0">, </span><span class="s1">prop)</span><span class="s0">}</span><span class="s2">&quot;</span><span class="s1">)</span>
+
+    <span class="s1">print(</span><span class="s2">&quot;</span><span class="s0">\n</span><span class="s2">-- app dirs (without optional 'appauthor')&quot;</span><span class="s1">)</span>
+    <span class="s1">dirs = PlatformDirs(app_name)</span>
+    <span class="s0">for </span><span class="s1">prop </span><span class="s0">in </span><span class="s1">PROPS:</span>
+        <span class="s1">print(</span><span class="s2">f&quot;</span><span class="s0">{</span><span class="s1">prop</span><span class="s0">}</span><span class="s2">: </span><span class="s0">{</span><span class="s1">getattr(dirs</span><span class="s0">, </span><span class="s1">prop)</span><span class="s0">}</span><span class="s2">&quot;</span><span class="s1">)</span>
+
+    <span class="s1">print(</span><span class="s2">&quot;</span><span class="s0">\n</span><span class="s2">-- app dirs (with disabled 'appauthor')&quot;</span><span class="s1">)</span>
+    <span class="s1">dirs = PlatformDirs(app_name</span><span class="s0">, </span><span class="s1">appauthor=</span><span class="s0">False</span><span class="s1">)</span>
+    <span class="s0">for </span><span class="s1">prop </span><span class="s0">in </span><span class="s1">PROPS:</span>
+        <span class="s1">print(</span><span class="s2">f&quot;</span><span class="s0">{</span><span class="s1">prop</span><span class="s0">}</span><span class="s2">: </span><span class="s0">{</span><span class="s1">getattr(dirs</span><span class="s0">, </span><span class="s1">prop)</span><span class="s0">}</span><span class="s2">&quot;</span><span class="s1">)</span>
+
+
+<span class="s0">if </span><span class="s1">__name__ == </span><span class="s2">&quot;__main__&quot;</span><span class="s1">:</span>
+    <span class="s1">main()</span>
+</pre>
+</body>
+</html>
